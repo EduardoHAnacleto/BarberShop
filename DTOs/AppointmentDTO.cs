@@ -1,8 +1,9 @@
-﻿namespace BarberShop.Models;
+﻿using BarberShop.Models;
 
-public class Appointment
+namespace BarberShop.DTOs;
+
+public class AppointmentDTO
 {
-    public int Id { get; set; }
     public Worker Worker { get; set; }
     public Customer Customer { get; set; }
     public Service Service { get; set; }
@@ -10,5 +11,4 @@ public class Appointment
     public Status Status { get; set; }
     public DateTime? CompletedAt { get; set; }
     public string ExtraDetails { get; set; } = string.Empty;
-
 }

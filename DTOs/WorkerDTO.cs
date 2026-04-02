@@ -1,8 +1,9 @@
-﻿namespace BarberShop.Models;
+﻿using BarberShop.Models;
 
-public class Worker
+namespace BarberShop.DTOs;
+
+public class WorkerDTO
 {
-    public int Id { get; set; }
     public string Name { get; set; } = null!;
     public ICollection<Service> ProvidedServices { get; set; } = new List<Service>();
     public string PhoneNumber { get; set; } = string.Empty;
