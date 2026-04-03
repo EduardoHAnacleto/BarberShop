@@ -16,11 +16,11 @@ public class CustomersHub : Hub
 
     public async Task NotifyPromotionsChanged()
     {
-        await Clients.All.SendAsync("PromotionsChanged");
+        await Clients.All.SendAsync("CustomersChanged");
     }
 
     public async Task NotifyActivePromotionsChanged()
     {
-        await Clients.All.SendAsync("ActivePromotionsChanged");
+        await Clients.All.SendAsync("ActiveCustomersChanged");
     }
 }

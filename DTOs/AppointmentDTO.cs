@@ -6,7 +6,7 @@ public class AppointmentDTO
 {
     public Worker Worker { get; set; }
     public int WorkerId { get; set; }
-    public Customer Customer { get; set; }
+    public Customer Customer { get; set; } = null!;
     public int CustomerId { get; set; }
     public Service Service { get; set; }
     public int ServiceId { get; set; }

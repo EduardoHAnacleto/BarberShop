@@ -5,6 +5,7 @@ using BarberShop.Models;
 using BarberShop.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.EntityFrameworkCore;
 
 namespace BarberShop.Controllers;
 
@@ -30,14 +31,14 @@ public class WorkersController : Controller
     [HttpGet]
     public async Task<IActionResult> GetAll()
     {
-        var workers = _context.Workers.ToList();
+        var workers = await _context.Workers.ToListAsync();
         return Ok(workers);
     }
 
     [HttpGet("{id:int}")]
     public async Task<IActionResult> GetById(int id)
     {
-        var worker = _context.Workers.Find(id);
+        var worker =  await _context.Workers.FindAsync(id);
         if (worker == null)
             return NotFound();
         var dto = new WorkerDTO
@@ -130,5 +131,23 @@ public class WorkersController : Controller
         // Notify clients about the new worker
         await _hubContext.Clients.All.SendAsync("WorkerCreated", newWorker.Id);
         return CreatedAtAction(nameof(GetById), new { id = newWorker.Id }, newWorker);
+    }
+
+    [HttpGet("{workerId : int}")]
+    public async Task<IActionResult> GetServicesByWorker(int id) // Fix
+    {
+        var worker = await _context.Workers.Include(w => w.ProvidedServices).FirstOrDefaultAsync(w => w.Id == id);
+        if (worker == null)
+            return NotFound();
+        return Ok(worker.ProvidedServices);
+    }
+
+    [HttpGet("{serviceName : string}")]
+    public async Task<IActionResult> GetWorkersByService(string serviceName)
+    {
+        var list = await _context.Workers.Where(s => s.ProvidedServices.Any(p => p.Name == serviceName)).ToListAsync();
+        if (!list.Any())
+            return NotFound();
+        return Ok(list);
     }
 }

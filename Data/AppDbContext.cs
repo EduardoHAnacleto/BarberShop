@@ -11,8 +11,7 @@ public class AppDbContext : DbContext
     public DbSet<Customer> Customers { get; set; }
     public DbSet<Service> Services { get; set; }
     public DbSet<Worker> Workers { get; set; }
-
-    public Status Status { get; set; }
+    //public Status Status { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

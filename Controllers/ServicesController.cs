@@ -5,6 +5,7 @@ using BarberShop.Models;
 using BarberShop.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.EntityFrameworkCore;
 
 namespace BarberShop.Controllers;
 
@@ -29,8 +30,8 @@ public class ServicesController : Controller
 
     [HttpGet("all")]
     public async Task<IActionResult> GetAll()
-    {     
-        var services = _context.Services.ToList();
+    {
+        var services = await _context.Services.ToListAsync();
         return Ok(services);
     }
 
@@ -38,7 +39,7 @@ public class ServicesController : Controller
     public async Task<IActionResult> GetById(int id)
     {
         //var cacheKey = $"services:id:{id}";
-        var service = _context.Services.Find(id);
+        var service = await _context.Services.FindAsync(id);
         if (service == null)
             return NotFound();
         var dto = new ServiceDTO

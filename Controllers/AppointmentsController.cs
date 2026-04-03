@@ -5,6 +5,7 @@ using BarberShop.Models;
 using BarberShop.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.EntityFrameworkCore;
 
 namespace BarberShop.Controllers;
 
@@ -29,14 +30,14 @@ public class AppointmentsController : Controller
     [HttpGet]
     public async Task<IActionResult> GetAll()
     {
-        var appointments = _context.Appointments.ToList();
+        var appointments = await _context.Appointments.OrderByDescending(a => a.ScheduledFor).ToListAsync();
         return Ok(appointments);
     }
 
     [HttpGet("{id:int}")]
     public async Task<IActionResult> GetById(int id)
     {
-        var appointment = _context.Appointments.Find(id);
+        var appointment = await _context.Appointments.FindAsync(id);
         if (appointment == null)
             return NotFound();
         return Ok(appointment);
@@ -45,16 +46,16 @@ public class AppointmentsController : Controller
     [HttpPatch("{id:int}")]
     public async Task<IActionResult> Update(int id, [FromBody] AppointmentDTO updatedAppointment)
     {
-        var appointment = _context.Appointments.Find(id);
+        var appointment = await _context.Appointments.FindAsync(id);
         if (appointment == null)
             return NotFound();
-        var customer = _context.Customers.Find(updatedAppointment.CustomerId);
+        var customer = await _context.Customers.FindAsync(updatedAppointment.CustomerId);
         if (customer == null)
             return BadRequest("Invalid Customer");
-        var worker = _context.Workers.Find(updatedAppointment.WorkerId);
+        var worker = await _context.Workers.FindAsync(updatedAppointment.WorkerId);
         if (worker == null)
             return BadRequest("Invalid Worker");
-        var service = _context.Services.Find(updatedAppointment.ServiceId);
+        var service = await _context.Services.FindAsync(updatedAppointment.ServiceId);
         if (service == null)
             return BadRequest("Invalid Service");
 
@@ -69,35 +70,110 @@ public class AppointmentsController : Controller
             appointment.CompletedAt = null;
         appointment.ExtraDetails = updatedAppointment.ExtraDetails;
 
-        _context.SaveChanges();
+        await _context.SaveChangesAsync();
         return NoContent();
     }
 
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> VirtualDelete(int id)
     {
-        var appointment = _context.Appointments.Find(id);
+        var appointment = await _context.Appointments.FindAsync(id);
         if (appointment == null)
             return NotFound();
-        appointment.Status = Status.Cancelled;
+        if (appointment.Status == Status.Cancelled)
+            return BadRequest("Appointment is already cancelled");
+        if (appointment.Status == Status.Completed)
+            return BadRequest("Completed appointments cannot be cancelled");
+        if (appointment.Status == Status.Deleted)
+            return BadRequest("Appointment is already deleted");
+        appointment.Status = Status.Deleted;
         appointment.CompletedAt = DateTime.UtcNow;
         _context.Appointments.Update(appointment);
-        _context.SaveChanges();
+        await _context.SaveChangesAsync();
         return NoContent();
+    }
+
+    public async Task<bool> IsWorkerAvailable(int workerId, DateTime scheduledFor, int appointmentDuration)
+    {
+        var lastAppointment = await _context.Appointments.Where(a => a.Worker.Id == workerId && a.ScheduledFor.Date == scheduledFor.Date && a.ScheduledFor <= scheduledFor)
+            .OrderByDescending(a => a.ScheduledFor)  
+            .FirstOrDefaultAsync();
+        var nextAppointment = await _context.Appointments.Where(a => a.Worker.Id == workerId && a.ScheduledFor.Date == scheduledFor.Date && a.ScheduledFor >= scheduledFor)
+            .OrderBy(a => a.ScheduledFor)
+            .FirstOrDefaultAsync();
+        if (lastAppointment != null && 
+            (lastAppointment.Status != Status.Cancelled && lastAppointment.Status != Status.Completed))
+        {
+            if (lastAppointment.ScheduledFor.AddMinutes(lastAppointment.Service.Duration) > scheduledFor)
+            {
+                return false;
+            }
+        }
+
+        if (nextAppointment != null && 
+            (nextAppointment.Status != Status.Cancelled && nextAppointment.Status != Status.Completed))
+        {
+            if (scheduledFor.AddMinutes(appointmentDuration) >= nextAppointment.ScheduledFor)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public async Task<bool> IsCustomerAvailable(int id, DateTime scheduledFor, int duration)
+    {
+        var lastAppointment = await _context.Appointments.Where(a => a.Customer.Id == id && a.ScheduledFor.Date == scheduledFor.Date && a.ScheduledFor <= scheduledFor)
+            .OrderByDescending(a => a.ScheduledFor)
+            .FirstOrDefaultAsync();
+        var nextAppointment = await _context.Appointments.Where(a => a.Customer.Id == id && a.ScheduledFor.Date == scheduledFor.Date && a.ScheduledFor >= scheduledFor)
+            .OrderBy(a => a.ScheduledFor)
+            .FirstOrDefaultAsync();
+        if (lastAppointment != null &&
+            (lastAppointment.Status != Status.Cancelled && lastAppointment.Status != Status.Completed))
+        {
+            if (lastAppointment.ScheduledFor.AddMinutes(lastAppointment.Service.Duration) > scheduledFor)
+            {
+                return false;
+            }
+        }
+
+        if (nextAppointment != null &&
+            (nextAppointment.Status != Status.Cancelled && nextAppointment.Status != Status.Completed))
+        {
+            if (scheduledFor.AddMinutes(duration) >= nextAppointment.ScheduledFor)
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] AppointmentDTO newAppointment)
     {
-        var customer = _context.Customers.Find(newAppointment.CustomerId);
+        var customer = await _context.Customers.FindAsync(newAppointment.CustomerId);
         if (customer == null)
             return BadRequest("Invalid Customer");
-        var worker = _context.Workers.Find(newAppointment.WorkerId);
+        var worker = await _context.Workers.FindAsync(newAppointment.WorkerId);
         if (worker == null)
             return BadRequest("Invalid Worker");
-        var service = _context.Services.Find(newAppointment.ServiceId);
+        var service = await _context.Services.FindAsync(newAppointment.ServiceId);
         if (service == null)
             return BadRequest("Invalid Service");
+
+        var workerAvailabilityTask = IsWorkerAvailable(worker.Id, newAppointment.ScheduledFor, service.Duration);
+        var customerAvailabilityTask = IsCustomerAvailable(customer.Id, newAppointment.ScheduledFor, service.Duration);
+
+        await Task.WhenAll(workerAvailabilityTask, customerAvailabilityTask);
+        var isWorkerAvailable = workerAvailabilityTask.Result;
+        var isCustomerAvailable = customerAvailabilityTask.Result;
+
+        if (!isWorkerAvailable)
+            return BadRequest("Worker is not available at the selected time");
+        if (!isCustomerAvailable)
+            return BadRequest("Customer has an appointment already scheduled at the selected time");
+
         var appointment = new Appointment
         {
             Customer = customer,
@@ -108,40 +184,40 @@ public class AppointmentsController : Controller
             Status = newAppointment.Status,
             ExtraDetails = newAppointment.ExtraDetails
         };
-        _context.Appointments.Add(appointment);
-        _context.SaveChanges();
+        await _context.Appointments.AddAsync(appointment);
+        await _context.SaveChangesAsync();
         return CreatedAtAction(nameof(GetById), new { id = appointment.Id }, appointment);
     }
 
     [HttpGet("{dateStart:datetime, dateEnd:datetime}")]
     public async Task<IActionResult> GetByDateRange(DateTime dateStart, DateTime dateEnd)
     {
-        var appointments = _context.Appointments.Where(a => a.ScheduledFor >= dateStart && a.ScheduledFor <= dateEnd).ToList();
+        var appointments = await _context.Appointments.Where(a => a.ScheduledFor >= dateStart && a.ScheduledFor <= dateEnd).OrderByDescending(a => a.ScheduledFor).ToListAsync();
         return Ok(appointments);
     }
 
     [HttpGet("worker/{workerId:int}")]
     public async Task<IActionResult> GetByWorker(int workerId)
     {
-        var appointments = _context.Appointments.Where(a => a.Worker.Id == workerId).ToList();
+        var appointments = await _context.Appointments.Where(a => a.Worker.Id == workerId).OrderByDescending(a => a.ScheduledFor).ToListAsync();
         return Ok(appointments);
     }
     [HttpGet("customer/{customerId:int}")]
     public async Task<IActionResult> GetByCustomer(int customerId)
     {
-        var appointments = _context.Appointments.Where(a => a.Customer.Id == customerId).ToList();
+        var appointments = await _context.Appointments.Where(a => a.Customer.Id == customerId).OrderByDescending(a => a.ScheduledFor).ToListAsync();
         return Ok(appointments);
     }
     [HttpGet("service/{serviceId:int}")]
     public async Task<IActionResult> GetByService(int serviceId)
     {
-        var appointments = _context.Appointments.Where(a => a.Service.Id == serviceId).ToList();
+        var appointments = await _context.Appointments.Where(a => a.Service.Id == serviceId).OrderByDescending(a => a.ScheduledFor).ToListAsync();
         return Ok(appointments);
     }
     [HttpGet("status/{status}")]
     public async Task<IActionResult> GetByStatus(Status status)
     {
-        var appointments = _context.Appointments.Where(a => a.Status == status).ToList();
+        var appointments = await _context.Appointments.Where(a => a.Status == status).OrderByDescending(a => a.Status).ToListAsync();
         return Ok(appointments);
     }
 }

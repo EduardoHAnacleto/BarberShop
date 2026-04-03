@@ -5,6 +5,7 @@ using BarberShop.Models;
 using BarberShop.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.EntityFrameworkCore;
 
 namespace BarberShop.Controllers;
 
@@ -30,13 +31,13 @@ public class CustomersController : Controller
     [HttpGet]
     public async Task<IActionResult> GetAll()
     {
-        return Ok(_context.Customers.ToList());
+        return Ok(await _context.Customers.ToListAsync());
     }
 
     [HttpGet("{id:int}")]
     public async Task<IActionResult> GetById(int id)
     {
-        var customer = _context.Customers.Find(id);
+        var customer = await _context.Customers.FindAsync(id);
         if (customer == null)
             return NotFound();
         return Ok(customer);
@@ -45,18 +46,18 @@ public class CustomersController : Controller
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id)
     {
-        var customer = _context.Customers.Find(id);
+        var customer = await _context.Customers.FindAsync(id);
         if (customer == null)
             return NotFound();
         _context.Customers.Remove(customer);
-        _context.SaveChanges();
+        await _context.SaveChangesAsync();
         return NoContent();
     }
 
     [HttpPatch("{id:int}")]
     public async Task<IActionResult> Update(int id, [FromBody] CustomerDTO updatedCustomer)
     {
-        var customer = _context.Customers.Find(id);
+        var customer = await _context.Customers.FindAsync(id);
         if (customer == null)
             return NotFound();
         // Update fields
@@ -64,7 +65,7 @@ public class CustomersController : Controller
         customer.PhoneNumber = updatedCustomer.PhoneNumber;
         customer.Email = updatedCustomer.Email;
         customer.DateOfBirth = updatedCustomer.DateOfBirth;
-        _context.SaveChanges();
+        await _context.SaveChangesAsync();
         return Ok(customer);
     }
 
@@ -78,8 +79,8 @@ public class CustomersController : Controller
             Email = newCustomer.Email,
             DateOfBirth = newCustomer.DateOfBirth
         };
-        _context.Customers.Add(customer);
-        _context.SaveChanges();
+        await _context.Customers.AddAsync(customer);
+        await _context.SaveChangesAsync();
         return CreatedAtAction(nameof(GetById), new { id = customer.Id }, customer);
     }
 

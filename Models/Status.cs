@@ -5,6 +5,7 @@
         OnGoing,
         Scheduled,
         Completed,
-        Cancelled
+        Cancelled,
+        Deleted
     }
 }

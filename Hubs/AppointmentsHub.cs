@@ -16,11 +16,11 @@ public class AppointmentsHub : Hub
 
     public async Task NotifyPromotionsChanged()
     {
-        await Clients.All.SendAsync("PromotionsChanged");
+        await Clients.All.SendAsync("AppointmentsChanged");
     }
 
     public async Task NotifyActivePromotionsChanged()
     {
-        await Clients.All.SendAsync("ActivePromotionsChanged");
+        await Clients.All.SendAsync("ActiveAppointmentsChanged");
     }
 }
