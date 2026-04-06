@@ -16,9 +16,9 @@ public class AppointmentsController : Controller
     private readonly AppDbContext _context;
     private readonly IWebHostEnvironment _environment;
     private readonly RedisService _redis;
-    private readonly IHubContext<WorkersHub> _hubContext;
+    private readonly IHubContext<AppointmentsHub> _hubContext;
     private readonly IConfiguration _configuration;
-    public AppointmentsController(AppDbContext context, IWebHostEnvironment environment, RedisService redis, IHubContext<WorkersHub> hubContext, IConfiguration configuration)
+    public AppointmentsController(AppDbContext context, IWebHostEnvironment environment, RedisService redis, IHubContext<AppointmentsHub> hubContext, IConfiguration configuration)
     {
         _context = context;
         _environment = environment;
@@ -71,6 +71,8 @@ public class AppointmentsController : Controller
         appointment.ExtraDetails = updatedAppointment.ExtraDetails;
 
         await _context.SaveChangesAsync();
+        await _hubContext.Clients.All.SendAsync("AppointmentsChanged");
+
         return NoContent();
     }
 
@@ -90,6 +92,8 @@ public class AppointmentsController : Controller
         appointment.CompletedAt = DateTime.UtcNow;
         _context.Appointments.Update(appointment);
         await _context.SaveChangesAsync();
+
+        await _hubContext.Clients.All.SendAsync("AppointmentsChanged");
         return NoContent();
     }
 
@@ -186,6 +190,9 @@ public class AppointmentsController : Controller
         };
         await _context.Appointments.AddAsync(appointment);
         await _context.SaveChangesAsync();
+
+        await _hubContext.Clients.All.SendAsync("AppointmentsChanged");
+
         return CreatedAtAction(nameof(GetById), new { id = appointment.Id }, appointment);
     }
 

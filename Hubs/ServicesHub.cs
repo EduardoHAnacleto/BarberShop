@@ -14,12 +14,12 @@ public class ServicesHub : Hub
         await base.OnDisconnectedAsync(exception);
     }
 
-    public async Task NotifyPromotionsChanged()
+    public async Task NotifyServicesChanged()
     {
         await Clients.All.SendAsync("ServicesChanged");
     }
 
-    public async Task NotifyActivePromotionsChanged()
+    public async Task NotifyActiveServicesChanged()
     {
         await Clients.All.SendAsync("ActiveServicesChanged");
     }

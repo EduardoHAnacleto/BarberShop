@@ -1,12 +1,11 @@
-﻿using Microsoft.EntityFrameworkCore.Storage;
-using StackExchange.Redis;
+﻿using StackExchange.Redis;
 using System.Text.Json;
 
 namespace BarberShop.Services;
 
 public class RedisService
 {
-    private readonly StackExchange.Redis.IDatabase _db;
+    private readonly IDatabase _db;
     private readonly IConnectionMultiplexer _redis;
 
     public RedisService(IConnectionMultiplexer redis)
@@ -24,7 +23,7 @@ public class RedisService
         TimeSpan? expiry = null)
     {
         var json = JsonSerializer.Serialize(value);
-        await _db.StringSetAsync(key, json, expiry);
+        await _db.StringSetAsync(key, json, (Expiration)expiry);
     }
 
     // ===============================
@@ -37,7 +36,7 @@ public class RedisService
         if (!value.HasValue)
             return default;
 
-        return JsonSerializer.Deserialize<T>(value!);
+        return JsonSerializer.Deserialize<T>(value.ToString()!);
     }
 
     // ===============================

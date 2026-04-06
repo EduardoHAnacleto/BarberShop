@@ -65,7 +65,7 @@ public class ServicesController : Controller
         // Invalidate cache for services
         await _redis.InvalidateByPrefixAsync("services");
         // Notify clients about the deletion
-        await _hubContext.Clients.All.SendAsync("ServiceDeleted", id);
+        await _hubContext.Clients.All.SendAsync("ServicesChanged");
         return NoContent();
     }
 
@@ -85,7 +85,7 @@ public class ServicesController : Controller
         // Invalidate cache for services
         await _redis.InvalidateByPrefixAsync("services");
         // Notify clients about the update
-        await _hubContext.Clients.All.SendAsync("ServiceUpdated", service);
+        await _hubContext.Clients.All.SendAsync("ServicesChanged");
         return Ok(service);
     }
 

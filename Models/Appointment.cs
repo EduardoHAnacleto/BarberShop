@@ -10,5 +10,7 @@ public class Appointment
     public Status Status { get; set; }
     public DateTime? CompletedAt { get; set; }
     public string ExtraDetails { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; } = DateTime.Now;
+    public DateTime? LastUpdatedAt { get; set; } = DateTime.Now;
 
 }

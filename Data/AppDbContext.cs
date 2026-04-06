@@ -11,6 +11,7 @@ public class AppDbContext : DbContext
     public DbSet<Customer> Customers { get; set; }
     public DbSet<Service> Services { get; set; }
     public DbSet<Worker> Workers { get; set; }
+    public DbSet<User> Users { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -19,6 +20,7 @@ public class AppDbContext : DbContext
             entity.ToTable("Services");
 
             entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("ServiceId");
             entity.Property(e => e.Name).HasColumnName("ServiceName");
             entity.Property(e => e.Price).HasColumnName("ServicePrice");
             entity.Property(e => e.Description).HasColumnName("ServiceDescription");
@@ -30,6 +32,7 @@ public class AppDbContext : DbContext
             entity.ToTable("Costumers");
 
             entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("CostumerId");
             entity.Property(e => e.Name).HasColumnName("CostumerName");
             entity.Property(e => e.DateOfBirth).HasColumnName("CostumerDateOfBirth");
             entity.Property(e => e.Email).HasColumnName("CostumerEmail");
@@ -41,6 +44,7 @@ public class AppDbContext : DbContext
             entity.ToTable("Workers");
 
             entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("WorkerId");
             entity.Property(e => e.Name).HasColumnName("WorkerName");
             entity.Property(e => e.DateOfBirth).HasColumnName("WorkerDateOfBirth");
             entity.Property(e => e.Address).HasColumnName("WorkerAddress");
@@ -53,11 +57,32 @@ public class AppDbContext : DbContext
                   .UsingEntity(e => e.ToTable("WorkersService"));
         });
 
+        modelBuilder.Entity<WorkerService>(entity =>
+        {
+            entity.ToTable("WorkerServices");
+
+            entity.HasKey(e => new { e.WorkerId, e.ServiceId });
+
+            entity.Property(e => e.WorkerId).HasColumnName("WSWorkerId");
+            entity.Property(e => e.ServiceId).HasColumnName("WSServiceId");
+
+            entity.HasOne(e => e.Worker)
+                  .WithMany()
+                  .HasForeignKey(e => e.WorkerId)
+                  .HasConstraintName("FK_WorkerServices_Workers");
+
+            entity.HasOne(e => e.Service)
+                  .WithMany()
+                  .HasForeignKey(e => e.ServiceId)
+                  .HasConstraintName("FK_WorkerServices_Services");
+        });
+
         modelBuilder.Entity<Appointment>(entity =>
         {
             entity.ToTable("Appointments");
 
             entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("AppointmentId");
             entity.Property(e => e.Service.Id).HasColumnName("AppointmentServiceId");
             entity.Property(e => e.Status).HasColumnName("AppointmentStatus");
             entity.Property(e => e.ScheduledFor).HasColumnName("AppointmentScheduledFor");

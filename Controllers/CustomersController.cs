@@ -16,10 +16,10 @@ public class CustomersController : Controller
     private readonly AppDbContext _context;
     private readonly IWebHostEnvironment _environment;
     private readonly RedisService _redis;
-    private readonly IHubContext<WorkersHub> _hubContext;
+    private readonly IHubContext<CustomersHub> _hubContext;
     private readonly IConfiguration _configuration;
 
-    public CustomersController(AppDbContext context, IWebHostEnvironment environment, RedisService redis, IHubContext<WorkersHub> hubContext, IConfiguration configuration)
+    public CustomersController(AppDbContext context, IWebHostEnvironment environment, RedisService redis, IHubContext<CustomersHub> hubContext, IConfiguration configuration)
     {
         _context = context;
         _environment = environment;
@@ -51,6 +51,7 @@ public class CustomersController : Controller
             return NotFound();
         _context.Customers.Remove(customer);
         await _context.SaveChangesAsync();
+        await _hubContext.Clients.All.SendAsync("CustomerssChanged");
         return NoContent();
     }
 
@@ -66,6 +67,7 @@ public class CustomersController : Controller
         customer.Email = updatedCustomer.Email;
         customer.DateOfBirth = updatedCustomer.DateOfBirth;
         await _context.SaveChangesAsync();
+        await _hubContext.Clients.All.SendAsync("CustomerssChanged");
         return Ok(customer);
     }
 
@@ -81,6 +83,7 @@ public class CustomersController : Controller
         };
         await _context.Customers.AddAsync(customer);
         await _context.SaveChangesAsync();
+        await _hubContext.Clients.All.SendAsync("CustomerssChanged");
         return CreatedAtAction(nameof(GetById), new { id = customer.Id }, customer);
     }
 

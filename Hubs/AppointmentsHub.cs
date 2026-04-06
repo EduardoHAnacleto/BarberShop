@@ -14,12 +14,12 @@ public class AppointmentsHub : Hub
         await base.OnDisconnectedAsync(exception);
     }
 
-    public async Task NotifyPromotionsChanged()
+    public async Task NotifyAppointmentsChanged()
     {
         await Clients.All.SendAsync("AppointmentsChanged");
     }
 
-    public async Task NotifyActivePromotionsChanged()
+    public async Task NotifyActiveAppointmentsChanged()
     {
         await Clients.All.SendAsync("ActiveAppointmentsChanged");
     }

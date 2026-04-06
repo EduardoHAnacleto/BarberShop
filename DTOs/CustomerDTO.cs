@@ -2,6 +2,7 @@
 
 public class CustomerDTO
 {
+    public int Id { get; set; }
     public string Name { get; set; } = null!;
     public DateTime? DateOfBirth { get; set; } = DateTime.MinValue!;
     public string Email { get; set; } = string.Empty;

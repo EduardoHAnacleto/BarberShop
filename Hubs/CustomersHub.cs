@@ -14,12 +14,12 @@ public class CustomersHub : Hub
         await base.OnDisconnectedAsync(exception);
     }
 
-    public async Task NotifyPromotionsChanged()
+    public async Task NotifyCustomersChanged()
     {
         await Clients.All.SendAsync("CustomersChanged");
     }
 
-    public async Task NotifyActivePromotionsChanged()
+    public async Task NotifyActiveCustomersChanged()
     {
         await Clients.All.SendAsync("ActiveCustomersChanged");
     }
