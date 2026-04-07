@@ -11,42 +11,57 @@ namespace BarberShop.Controllers;
 
 [ApiController]
 [Route("api/appointments")]
-public class AppointmentsController : Controller
+public class AppointmentsController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly IWebHostEnvironment _environment;
     private readonly RedisService _redis;
     private readonly IHubContext<AppointmentsHub> _hubContext;
     private readonly IConfiguration _configuration;
-    public AppointmentsController(AppDbContext context, IWebHostEnvironment environment, RedisService redis, IHubContext<AppointmentsHub> hubContext, IConfiguration configuration)
+    private readonly IAppointmentService _appointmentService;
+    public AppointmentsController(AppDbContext context, IWebHostEnvironment environment, RedisService redis, IHubContext<AppointmentsHub> hubContext, IConfiguration configuration, AppointmentService appointmentService)
     {
         _context = context;
         _environment = environment;
         _redis = redis;
         _hubContext = hubContext;
         _configuration = configuration;
+        _appointmentService = appointmentService;
     }
 
-    [HttpGet]
+    [HttpGet("all")]
     public async Task<IActionResult> GetAll()
     {
-        var appointments = await _context.Appointments.OrderByDescending(a => a.ScheduledFor).ToListAsync();
+        var appointments = await _context.Appointments.Include(p => p.Customer)
+            .Include(p => p.Worker)
+            .Include(p => p.Service)
+            .OrderByDescending(a => a.ScheduledFor).ToListAsync();
         return Ok(appointments);
     }
 
     [HttpGet("{id:int}")]
     public async Task<IActionResult> GetById(int id)
     {
-        var appointment = await _context.Appointments.FindAsync(id);
+        var appointment = await _context.Appointments
+            .Include(p => p.Customer)
+            .Include(p => p.Worker)
+            .Include(p => p.Service)
+            .FirstOrDefaultAsync(p => p.Id == id);
         if (appointment == null)
             return NotFound();
         return Ok(appointment);
     }
 
-    [HttpPatch("{id:int}")]
-    public async Task<IActionResult> Update(int id, [FromBody] AppointmentDTO updatedAppointment)
+    [HttpPut("{id:int}")]
+    public async Task<IActionResult> Update(int id, [FromBody] AppointmentRequestDTO updatedAppointment)
     {
-        var appointment = await _context.Appointments.FindAsync(id);
+        var appointment = await _context.Appointments
+            .AsTracking()
+            .Include(p => p.Customer)
+            .Include(p => p.Worker)
+            .Include(p => p.Service)
+            .FirstOrDefaultAsync(p => p.Id == id);
+
         if (appointment == null)
             return NotFound();
         var customer = await _context.Customers.FindAsync(updatedAppointment.CustomerId);
@@ -97,77 +112,23 @@ public class AppointmentsController : Controller
         return NoContent();
     }
 
-    public async Task<bool> IsWorkerAvailable(int workerId, DateTime scheduledFor, int appointmentDuration)
-    {
-        var lastAppointment = await _context.Appointments.Where(a => a.Worker.Id == workerId && a.ScheduledFor.Date == scheduledFor.Date && a.ScheduledFor <= scheduledFor)
-            .OrderByDescending(a => a.ScheduledFor)  
-            .FirstOrDefaultAsync();
-        var nextAppointment = await _context.Appointments.Where(a => a.Worker.Id == workerId && a.ScheduledFor.Date == scheduledFor.Date && a.ScheduledFor >= scheduledFor)
-            .OrderBy(a => a.ScheduledFor)
-            .FirstOrDefaultAsync();
-        if (lastAppointment != null && 
-            (lastAppointment.Status != Status.Cancelled && lastAppointment.Status != Status.Completed))
-        {
-            if (lastAppointment.ScheduledFor.AddMinutes(lastAppointment.Service.Duration) > scheduledFor)
-            {
-                return false;
-            }
-        }
-
-        if (nextAppointment != null && 
-            (nextAppointment.Status != Status.Cancelled && nextAppointment.Status != Status.Completed))
-        {
-            if (scheduledFor.AddMinutes(appointmentDuration) >= nextAppointment.ScheduledFor)
-            {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    public async Task<bool> IsCustomerAvailable(int id, DateTime scheduledFor, int duration)
-    {
-        var lastAppointment = await _context.Appointments.Where(a => a.Customer.Id == id && a.ScheduledFor.Date == scheduledFor.Date && a.ScheduledFor <= scheduledFor)
-            .OrderByDescending(a => a.ScheduledFor)
-            .FirstOrDefaultAsync();
-        var nextAppointment = await _context.Appointments.Where(a => a.Customer.Id == id && a.ScheduledFor.Date == scheduledFor.Date && a.ScheduledFor >= scheduledFor)
-            .OrderBy(a => a.ScheduledFor)
-            .FirstOrDefaultAsync();
-        if (lastAppointment != null &&
-            (lastAppointment.Status != Status.Cancelled && lastAppointment.Status != Status.Completed))
-        {
-            if (lastAppointment.ScheduledFor.AddMinutes(lastAppointment.Service.Duration) > scheduledFor)
-            {
-                return false;
-            }
-        }
-
-        if (nextAppointment != null &&
-            (nextAppointment.Status != Status.Cancelled && nextAppointment.Status != Status.Completed))
-        {
-            if (scheduledFor.AddMinutes(duration) >= nextAppointment.ScheduledFor)
-            {
-                return false;
-            }
-        }
-        return true;
-    }
-
     [HttpPost]
-    public async Task<IActionResult> Create([FromBody] AppointmentDTO newAppointment)
+    public async Task<IActionResult> Create([FromBody] AppointmentRequestDTO newAppointment)
     {
-        var customer = await _context.Customers.FindAsync(newAppointment.CustomerId);
-        if (customer == null)
+        var customer = await _context.Customers.AnyAsync(c => c.Id == newAppointment.CustomerId);
+        if (!customer)
             return BadRequest("Invalid Customer");
-        var worker = await _context.Workers.FindAsync(newAppointment.WorkerId);
-        if (worker == null)
+
+        var worker = await _context.Workers.AnyAsync(p => p.Id == newAppointment.WorkerId);
+        if (!worker)
             return BadRequest("Invalid Worker");
+
         var service = await _context.Services.FindAsync(newAppointment.ServiceId);
         if (service == null)
             return BadRequest("Invalid Service");
 
-        var workerAvailabilityTask = IsWorkerAvailable(worker.Id, newAppointment.ScheduledFor, service.Duration);
-        var customerAvailabilityTask = IsCustomerAvailable(customer.Id, newAppointment.ScheduledFor, service.Duration);
+        var workerAvailabilityTask = _appointmentService.IsWorkerAvailable(newAppointment.WorkerId, newAppointment.ScheduledFor, service.Duration);
+        var customerAvailabilityTask = _appointmentService.IsCustomerAvailable(newAppointment.CustomerId, newAppointment.ScheduledFor, service.Duration);
 
         await Task.WhenAll(workerAvailabilityTask, customerAvailabilityTask);
         var isWorkerAvailable = workerAvailabilityTask.Result;
@@ -180,9 +141,9 @@ public class AppointmentsController : Controller
 
         var appointment = new Appointment
         {
-            Customer = customer,
-            Worker = worker,
-            Service = service,
+            CustomerId = newAppointment.CustomerId,
+            WorkerId = newAppointment.WorkerId,
+            ServiceId = newAppointment.ServiceId,
             ScheduledFor = newAppointment.ScheduledFor,
             CompletedAt = newAppointment.CompletedAt,
             Status = newAppointment.Status,
@@ -193,38 +154,80 @@ public class AppointmentsController : Controller
 
         await _hubContext.Clients.All.SendAsync("AppointmentsChanged");
 
-        return CreatedAtAction(nameof(GetById), new { id = appointment.Id }, appointment);
+        var response = new AppointmentResponseDTO
+        {
+            Id = appointment.Id,
+            CustomerId = appointment.CustomerId,
+            CustomerName = (await _context.Customers.FindAsync(appointment.CustomerId))?.Name,
+            WorkerId = appointment.WorkerId,
+            WorkerName = (await _context.Workers.FindAsync(appointment.WorkerId))?.Name,
+            ServiceId = appointment.ServiceId,
+            ServiceName = (await _context.Services.FindAsync(appointment.ServiceId))?.Name,
+            ScheduledFor = appointment.ScheduledFor,
+            CompletedAt = appointment.CompletedAt,
+            Status = appointment.Status,
+            ExtraDetails = appointment.ExtraDetails,
+            CreatedAt = appointment.CreatedAt,
+        };
+
+        return CreatedAtAction(nameof(GetById), new { id = response.Id }, response);
     }
 
-    [HttpGet("{dateStart:datetime, dateEnd:datetime}")]
-    public async Task<IActionResult> GetByDateRange(DateTime dateStart, DateTime dateEnd)
+    [HttpGet("range")]
+    public async Task<IActionResult> GetByDateRange([FromQuery]DateTime dateStart, [FromQuery]DateTime dateEnd)
     {
-        var appointments = await _context.Appointments.Where(a => a.ScheduledFor >= dateStart && a.ScheduledFor <= dateEnd).OrderByDescending(a => a.ScheduledFor).ToListAsync();
+        var appointments = await _context.Appointments
+            .Include(p => p.Customer)
+            .Include(p => p.Worker)
+            .Include(p => p.Service)
+            .Where(a => a.ScheduledFor >= dateStart && a.ScheduledFor <= dateEnd)
+            .OrderByDescending(a => a.ScheduledFor).ToListAsync();
         return Ok(appointments);
     }
 
     [HttpGet("worker/{workerId:int}")]
     public async Task<IActionResult> GetByWorker(int workerId)
     {
-        var appointments = await _context.Appointments.Where(a => a.Worker.Id == workerId).OrderByDescending(a => a.ScheduledFor).ToListAsync();
+        var appointments = await _context.Appointments
+            .Include(p => p.Customer)
+            .Include(p => p.Worker)
+            .Include(p => p.Service)
+            .Where(a => a.Worker.Id == workerId)
+            .OrderByDescending(a => a.ScheduledFor).ToListAsync();
         return Ok(appointments);
     }
     [HttpGet("customer/{customerId:int}")]
     public async Task<IActionResult> GetByCustomer(int customerId)
     {
-        var appointments = await _context.Appointments.Where(a => a.Customer.Id == customerId).OrderByDescending(a => a.ScheduledFor).ToListAsync();
+        var appointments = await _context.Appointments
+            .Include(p => p.Customer)
+            .Include(p => p.Worker)
+            .Include(p => p.Service)
+            .Where(a => a.Customer.Id == customerId)
+            .OrderByDescending(a => a.ScheduledFor).ToListAsync();
         return Ok(appointments);
     }
     [HttpGet("service/{serviceId:int}")]
     public async Task<IActionResult> GetByService(int serviceId)
     {
-        var appointments = await _context.Appointments.Where(a => a.Service.Id == serviceId).OrderByDescending(a => a.ScheduledFor).ToListAsync();
+        var appointments = await _context.Appointments
+            .Include(p => p.Customer)
+            .Include(p => p.Worker)
+            .Include(p => p.Service)
+            .Where(a => a.Service.Id == serviceId)
+            .OrderByDescending(a => a.ScheduledFor).ToListAsync();
         return Ok(appointments);
     }
     [HttpGet("status/{status}")]
     public async Task<IActionResult> GetByStatus(Status status)
     {
-        var appointments = await _context.Appointments.Where(a => a.Status == status).OrderByDescending(a => a.Status).ToListAsync();
+        var appointments = await _context.Appointments
+            .Include(p => p.Customer)
+            .Include(p => p.Worker)
+            .Include(p => p.Service)
+            .Where(a => a.Status == status)
+            .OrderByDescending(a => a.Status)
+            .ToListAsync();
         return Ok(appointments);
     }
 }

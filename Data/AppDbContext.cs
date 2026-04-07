@@ -83,25 +83,26 @@ public class AppDbContext : DbContext
 
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Id).HasColumnName("AppointmentId");
-            entity.Property(e => e.Service.Id).HasColumnName("AppointmentServiceId");
+            entity.Property(e => e.ServiceId).HasColumnName("AppointmentServiceId");
+            entity.Property(e => e.CustomerId).HasColumnName("AppointmentCustomerId");
+            entity.Property(e => e.WorkerId).HasColumnName("AppointmentWorkerId");
+
             entity.Property(e => e.Status).HasColumnName("AppointmentStatus");
             entity.Property(e => e.ScheduledFor).HasColumnName("AppointmentScheduledFor");
             entity.Property(e => e.ExtraDetails).HasColumnName("AppointmentExtraDetails");
             entity.Property(e => e.CompletedAt).HasColumnName("AppointmentCompletedAt");
-            entity.Property(e => e.Customer.Id).HasColumnName("AppointmentCustomerId");
-            entity.Property(e => e.Worker.Id).HasColumnName("AppointmentWorkerId");
 
             entity.HasOne(e => e.Customer)
                   .WithMany()
-                  .HasForeignKey(e => e.Customer.Id)
+                  .HasForeignKey(e => e.CustomerId)
                   .OnDelete(DeleteBehavior.NoAction);
             entity.HasOne(e => e.Worker)
                   .WithMany()
-                  .HasForeignKey(e => e.Worker.Id)
+                  .HasForeignKey(e => e.WorkerId)
                   .OnDelete(DeleteBehavior.NoAction);
             entity.HasOne(e => e.Service)
                   .WithMany()
-                  .HasForeignKey(e => e.Service.Id)
+                  .HasForeignKey(e => e.ServiceId)
                   .OnDelete(DeleteBehavior.NoAction);
         });
 

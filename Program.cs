@@ -3,6 +3,7 @@ using BarberShop.Hubs;
 using BarberShop.Services;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using StackExchange.Redis;
 using System.Reflection;
 using System.Text.Json;
@@ -22,6 +23,9 @@ builder.Services.AddSignalR(options =>
 {
     options.EnableDetailedErrors = true;
 });
+
+// DI
+builder.Services.AddScoped<IAppointmentService, AppointmentService>();
 
 // Swagger
 builder.Services.AddEndpointsApiExplorer();
@@ -80,7 +84,7 @@ else
                 );
                 sqlOptions.CommandTimeout(60);
             }
-        )
+        ).UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking)
     );
 }
 

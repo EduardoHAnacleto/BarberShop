@@ -12,5 +12,6 @@ public class WorkerDTO
     public DateTime DateOfBirth { get; set; }
     public string Address { get; set; } = string.Empty;
     public decimal WagePerHour { get; set; }
-    public string Position { get; set; }
+    public string Position { get; set; } = string.Empty;
+    public string Email { get; set; } = null!;
 }

@@ -11,7 +11,7 @@ namespace BarberShop.Controllers;
 
 [ApiController]
 [Route("api/workers")]
-public class WorkersController : Controller
+public class WorkersController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly IWebHostEnvironment _environment;
@@ -28,7 +28,7 @@ public class WorkersController : Controller
         _configuration = configuration;
     }
 
-    [HttpGet]
+    [HttpGet("all")]
     public async Task<IActionResult> GetAll()
     {
         var workers = await _context.Workers.Include(w => w.ProvidedServices).ToListAsync();
@@ -74,13 +74,13 @@ public class WorkersController : Controller
         _context.Workers.Remove(worker);
         await _context.SaveChangesAsync();
         // Invalidate cache for workers
-        await _redis.InvalidateByPrefixAsync("workers");
+        //await _redis.InvalidateByPrefixAsync("workers");
         // Notify clients about the deletion
         await _hubContext.Clients.All.SendAsync("WorkerChanged");
         return NoContent();
     }
 
-    [HttpPatch("{id:int}")]
+    [HttpPut("{id:int}")]
     public async Task<IActionResult> Update([FromBody] WorkerDTO worker, int id)
     {
         var existingWorker = await _context.Workers.FindAsync(id);
@@ -97,9 +97,11 @@ public class WorkersController : Controller
         existingWorker.ProvidedServices = services;
         existingWorker.WagePerHour = worker.WagePerHour;
         existingWorker.Position = worker.Position;
+        existingWorker.Email = worker.Email;
+        existingWorker.LastUpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
         // Invalidate cache for workers
-        await _redis.InvalidateByPrefixAsync("workers");
+        //await _redis.InvalidateByPrefixAsync("workers");
         // Notify clients about the update
         await _hubContext.Clients.All.SendAsync("WorkerChanged");
         return NoContent();
@@ -112,7 +114,7 @@ public class WorkersController : Controller
         {
             return BadRequest();
         };
-        if (worker.PhoneNumber == string.Empty || worker.PhoneNumber.Length < 7)
+        if (worker.PhoneNumber == string.Empty || worker.PhoneNumber.Length < 7 || worker.PhoneNumber.Length>15)
         {
             return BadRequest();
         };
@@ -128,29 +130,43 @@ public class WorkersController : Controller
         {
             return BadRequest();
         }
-        var services = await _context.Services
-            .Where(s => worker.ServicesId.Contains(s.Id))
-            .ToListAsync();
+        if (worker.ProvidedServices == null)
+        {
+            return BadRequest();
+        }
+        var serviceList = new List<Service>();
+        foreach (var providedService in worker.ProvidedServices)
+        {
+            var serviceId = await _context.Services
+                .FindAsync(providedService.Id);
+            if (serviceId == null)
+            {
+                return BadRequest($"Service with ID {providedService.Id} does not exist.");
+            }
+            serviceList.Add(serviceId);
+        }
+
         var newWorker = new Worker
         {
             Name = worker.Name,
             PhoneNumber = worker.PhoneNumber,
             Address = worker.Address,
             DateOfBirth = worker.DateOfBirth,
-            ProvidedServices = services,
+            ProvidedServices = serviceList,
             WagePerHour = worker.WagePerHour,
-            Position = worker.Position
+            Position = worker.Position,
+            Email = worker.Email
         };
         await _context.Workers.AddAsync(newWorker);
         await _context.SaveChangesAsync();
         // Invalidate cache for workers
-        await _redis.InvalidateByPrefixAsync("workers");
+        //await _redis.InvalidateByPrefixAsync("workers");
         // Notify clients about the new worker
         await _hubContext.Clients.All.SendAsync("WorkerChanged");
         return CreatedAtAction(nameof(GetById), new { id = newWorker.Id }, newWorker);
     }
 
-    [HttpGet("{workerId : int}")]
+    [HttpGet("by-worker/{id:int}")]
     public async Task<IActionResult> GetServicesByWorker(int id) // Fix
     {
         var worker = await _context.Workers.Include(w => w.ProvidedServices).FirstOrDefaultAsync(w => w.Id == id);
@@ -159,7 +175,7 @@ public class WorkersController : Controller
         return Ok(worker.ProvidedServices);
     }
 
-    [HttpGet("{serviceName : string}")]
+    [HttpGet("by-service/{serviceName}")]
     public async Task<IActionResult> GetWorkersByService(string serviceName)
     {
         var list = await _context.Workers.Where(s => s.ProvidedServices.Any(p => p.Name == serviceName)).ToListAsync();

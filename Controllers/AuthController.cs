@@ -7,7 +7,9 @@ using Microsoft.EntityFrameworkCore;
 
 namespace BarberShop.Controllers;
 
-public class AuthController : Controller
+[ApiController]
+[Route("api/auth")]
+public class AuthController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly AuthService _authService;
@@ -18,7 +20,8 @@ public class AuthController : Controller
         _authService = authService;
     }
 
-    public async Task<AuthResponseDTO?> LoginAsync(LoginDTO dto)
+    [HttpGet("login")]
+    public async Task<AuthResponseDTO?> LoginAsync([FromBody]LoginDTO dto)
     {
         var user = await _context.Users
             .FirstOrDefaultAsync(u => u.Email == dto.Email);
@@ -66,7 +69,7 @@ public class AuthController : Controller
     }
 
     [HttpPost("google")]
-    public async Task<IActionResult> GoogleLogin(GoogleLoginDTO dto)
+    public async Task<IActionResult> GoogleLogin([FromBody]GoogleLoginDTO dto)
     {
         var result = await _authService.GoogleLoginAsync(dto.IdToken);
 

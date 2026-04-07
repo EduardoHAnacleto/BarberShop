@@ -11,7 +11,7 @@ namespace BarberShop.Controllers;
 
 [ApiController]
 [Route("api/services")]
-public class ServicesController : Controller
+public class ServicesController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly IWebHostEnvironment _environment;
@@ -63,13 +63,13 @@ public class ServicesController : Controller
         _context.Services.Remove(service);
         await _context.SaveChangesAsync();
         // Invalidate cache for services
-        await _redis.InvalidateByPrefixAsync("services");
+        //await _redis.InvalidateByPrefixAsync("services");
         // Notify clients about the deletion
         await _hubContext.Clients.All.SendAsync("ServicesChanged");
         return NoContent();
     }
 
-    [HttpPatch("{id:int}")]
+    [HttpPut("{id:int}")]
     public async Task<IActionResult> Update(int id, [FromBody] ServiceDTO updatedService)
     {
         var service = _context.Services.Find(id);
@@ -83,7 +83,7 @@ public class ServicesController : Controller
 
         await _context.SaveChangesAsync();
         // Invalidate cache for services
-        await _redis.InvalidateByPrefixAsync("services");
+        //await _redis.InvalidateByPrefixAsync("services");
         // Notify clients about the update
         await _hubContext.Clients.All.SendAsync("ServicesChanged");
         return Ok(service);
@@ -116,7 +116,7 @@ public class ServicesController : Controller
         _context.Services.Add(obj);
         await _context.SaveChangesAsync();
 
-        await _redis.InvalidateByPrefixAsync("services");
+        //await _redis.InvalidateByPrefixAsync("services");
         await _hubContext.Clients.All.SendAsync("ServicesChanged");
 
         return CreatedAtAction(nameof(GetById), new { id = obj.Id }, obj);

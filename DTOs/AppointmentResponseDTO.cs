@@ -1,19 +1,19 @@
-﻿namespace BarberShop.Models;
+﻿using BarberShop.Models;
 
-public class Appointment
+namespace BarberShop.DTOs;
+
+public class AppointmentResponseDTO
 {
     public int Id { get; set; }
-    public Worker Worker { get; set; }
+    public string WorkerName { get; set; } = null!;
     public int WorkerId { get; set; }
-    public Customer Customer { get; set; }
+    public string CustomerName { get; set; } = null!;
     public int CustomerId { get; set; }
-    public Service Service { get; set; }
+    public string ServiceName { get; set; } = null!;
     public int ServiceId { get; set; }
     public DateTime ScheduledFor { get; set; }
     public Status Status { get; set; }
     public DateTime? CompletedAt { get; set; }
     public string ExtraDetails { get; set; } = string.Empty;
-    public DateTime CreatedAt { get; set; } = DateTime.Now;
-    public DateTime? LastUpdatedAt { get; set; } = DateTime.Now;
-
+    public DateTime CreatedAt { get; set; }
 }

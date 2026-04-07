@@ -11,7 +11,7 @@ namespace BarberShop.Controllers;
 
 [ApiController]
 [Route("api/customers")]
-public class CustomersController : Controller
+public class CustomersController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly IWebHostEnvironment _environment;
@@ -28,7 +28,7 @@ public class CustomersController : Controller
         _configuration = configuration;
     }
 
-    [HttpGet]
+    [HttpGet("all")]
     public async Task<IActionResult> GetAll()
     {
         return Ok(await _context.Customers.ToListAsync());
@@ -55,7 +55,7 @@ public class CustomersController : Controller
         return NoContent();
     }
 
-    [HttpPatch("{id:int}")]
+    [HttpPut("{id:int}")]
     public async Task<IActionResult> Update(int id, [FromBody] CustomerDTO updatedCustomer)
     {
         var customer = await _context.Customers.FindAsync(id);
