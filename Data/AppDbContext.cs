@@ -106,6 +106,24 @@ public class AppDbContext : DbContext
                   .OnDelete(DeleteBehavior.NoAction);
         });
 
+        modelBuilder.Entity<User>(entity =>
+        {
+            entity.ToTable("Users");
+
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("UserId");
+            entity.Property(e => e.Role).HasColumnName("UserRole");
+            entity.Property(e => e.CustomerId).HasColumnName("UserCustomerId");
+            entity.Property(e => e.WorkerId).HasColumnName("UserWorkerId");
+            entity.Property(e => e.CreatedAt).HasColumnName("UserCreatedAt");
+            entity.Property(e => e.Email).HasColumnName("UserEmail");
+            entity.Property(e => e.FailedLoginAttempts).HasColumnName("UserFailedLoginAttempts");
+            entity.Property(e => e.GoogleId).HasColumnName("UserGoogleId");
+            entity.Property(e => e.PasswordHash).HasColumnName("UserPasswordHash");
+            entity.Property(e => e.IsActive).HasColumnName("UserIsActive");
+            entity.Property(e => e.LockoutEnd).HasColumnName("UserLockoutEnd");
+        });
+
     }
 }
 

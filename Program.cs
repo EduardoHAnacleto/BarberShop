@@ -18,6 +18,9 @@ builder.Services.AddControllers()
     o.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase);
 builder.Services.AddDirectoryBrowser();
 
+//AutoMapper DTO - Model
+//builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
+
 // SignalR
 builder.Services.AddSignalR(options =>
 {

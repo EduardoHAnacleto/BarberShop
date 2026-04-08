@@ -1,4 +1,5 @@
-﻿using BarberShop.Data;
+﻿using AutoMapper;
+using BarberShop.Data;
 using BarberShop.DTOs;
 using BarberShop.Hubs;
 using BarberShop.Models;
@@ -18,21 +19,25 @@ public class WorkersController : ControllerBase
     private readonly RedisService _redis;
     private readonly IHubContext<WorkersHub> _hubContext;
     private readonly IConfiguration _configuration;
+    private readonly IMapper _mapper;
 
-    public WorkersController(AppDbContext context, IWebHostEnvironment environment, RedisService redis, IHubContext<WorkersHub> hubContext, IConfiguration configuration)
+    public WorkersController(AppDbContext context, IWebHostEnvironment environment, RedisService redis,
+        IHubContext<WorkersHub> hubContext, IConfiguration configuration, IMapper mapper)
     {
         _context = context;
         _environment = environment;
         _redis = redis;
         _hubContext = hubContext;
         _configuration = configuration;
+        _mapper = mapper;
     }
 
     [HttpGet("all")]
     public async Task<IActionResult> GetAll()
     {
         var workers = await _context.Workers.Include(w => w.ProvidedServices).ToListAsync();
-        return Ok(workers);
+        var dtoList = _mapper.Map<List<WorkerDTO>>(workers);
+        return Ok(dtoList);
     }
 
     [HttpGet("{id:int}")]
@@ -76,7 +81,7 @@ public class WorkersController : ControllerBase
         // Invalidate cache for workers
         //await _redis.InvalidateByPrefixAsync("workers");
         // Notify clients about the deletion
-        await _hubContext.Clients.All.SendAsync("WorkerChanged");
+        await _hubContext.Clients.All.SendAsync("WorkersChanged");
         return NoContent();
     }
 
@@ -103,7 +108,7 @@ public class WorkersController : ControllerBase
         // Invalidate cache for workers
         //await _redis.InvalidateByPrefixAsync("workers");
         // Notify clients about the update
-        await _hubContext.Clients.All.SendAsync("WorkerChanged");
+        await _hubContext.Clients.All.SendAsync("WorkersChanged");
         return NoContent();
     }
 
@@ -162,8 +167,8 @@ public class WorkersController : ControllerBase
         // Invalidate cache for workers
         //await _redis.InvalidateByPrefixAsync("workers");
         // Notify clients about the new worker
-        await _hubContext.Clients.All.SendAsync("WorkerChanged");
-        return CreatedAtAction(nameof(GetById), new { id = newWorker.Id }, newWorker);
+        await _hubContext.Clients.All.SendAsync("WorkersChanged");
+        return CreatedAtAction(nameof(GetById), new { id = newWorker.Id }, worker);
     }
 
     [HttpGet("by-worker/{id:int}")]
@@ -172,7 +177,13 @@ public class WorkersController : ControllerBase
         var worker = await _context.Workers.Include(w => w.ProvidedServices).FirstOrDefaultAsync(w => w.Id == id);
         if (worker == null)
             return NotFound();
-        return Ok(worker.ProvidedServices);
+        var dtoList = worker.ProvidedServices.Select(s => new ServiceDTO
+        {
+            Name = s.Name,
+            Duration = s.Duration,
+            Price = s.Price
+        }).ToList();
+        return Ok(dtoList);
     }
 
     [HttpGet("by-service/{serviceName}")]
@@ -181,6 +192,17 @@ public class WorkersController : ControllerBase
         var list = await _context.Workers.Where(s => s.ProvidedServices.Any(p => p.Name == serviceName)).ToListAsync();
         if (!list.Any())
             return NotFound();
-        return Ok(list);
+        var dtoList = list.Select(w => new WorkerDTO
+        {
+            Id = w.Id,
+            Name = w.Name,
+            PhoneNumber = w.PhoneNumber,
+            Address = w.Address,
+            DateOfBirth = w.DateOfBirth,
+            WagePerHour = w.WagePerHour,
+            Position = w.Position,
+            Email = w.Email
+        }).ToList();
+        return Ok(dtoList);
     }
 }

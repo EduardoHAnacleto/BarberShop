@@ -62,11 +62,9 @@ public class AuthService
         if (user == null)
             return null;
 
-        // 🔒 Verifica se está bloqueado
         if (user.LockoutEnd != null && user.LockoutEnd > DateTime.UtcNow)
             throw new Exception("User is locked. Try again later.");
 
-        // 🔑 Senha inválida
         if (!BCrypt.Net.BCrypt.Verify(dto.Password, user.PasswordHash))
         {
             user.FailedLoginAttempts++;

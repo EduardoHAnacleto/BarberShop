@@ -1,4 +1,5 @@
-﻿using BarberShop.Data;
+﻿using AutoMapper;
+using BarberShop.Data;
 using BarberShop.DTOs;
 using BarberShop.Hubs;
 using BarberShop.Models;
@@ -18,19 +19,23 @@ public class CustomersController : ControllerBase
     private readonly RedisService _redis;
     private readonly IHubContext<CustomersHub> _hubContext;
     private readonly IConfiguration _configuration;
+    private readonly IMapper _mapper;
 
-    public CustomersController(AppDbContext context, IWebHostEnvironment environment, RedisService redis, IHubContext<CustomersHub> hubContext, IConfiguration configuration)
+    public CustomersController(AppDbContext context, IWebHostEnvironment environment, RedisService redis, IHubContext<CustomersHub> hubContext, IConfiguration configuration, IMapper mapper)
     {
         _context = context;
         _environment = environment;
         _redis = redis;
         _hubContext = hubContext;
         _configuration = configuration;
+        _mapper = mapper;
     }
 
     [HttpGet("all")]
     public async Task<IActionResult> GetAll()
     {
+        var customerList = await _context.Customers.ToListAsync();
+        var dtoList = _mapper.Map<List<CustomerDTO>>(customerList);
         return Ok(await _context.Customers.ToListAsync());
     }
 
@@ -40,7 +45,8 @@ public class CustomersController : ControllerBase
         var customer = await _context.Customers.FindAsync(id);
         if (customer == null)
             return NotFound();
-        return Ok(customer);
+        var dto = _mapper.Map<CustomerDTO>(customer);
+        return Ok(dto);
     }
 
     [HttpDelete("{id:int}")]
@@ -51,7 +57,7 @@ public class CustomersController : ControllerBase
             return NotFound();
         _context.Customers.Remove(customer);
         await _context.SaveChangesAsync();
-        await _hubContext.Clients.All.SendAsync("CustomerssChanged");
+        await _hubContext.Clients.All.SendAsync("CustomersChanged");
         return NoContent();
     }
 
@@ -67,8 +73,8 @@ public class CustomersController : ControllerBase
         customer.Email = updatedCustomer.Email;
         customer.DateOfBirth = updatedCustomer.DateOfBirth;
         await _context.SaveChangesAsync();
-        await _hubContext.Clients.All.SendAsync("CustomerssChanged");
-        return Ok(customer);
+        await _hubContext.Clients.All.SendAsync("CustomersChanged");
+        return Ok(updatedCustomer);
     }
 
     [HttpPost]
@@ -83,8 +89,8 @@ public class CustomersController : ControllerBase
         };
         await _context.Customers.AddAsync(customer);
         await _context.SaveChangesAsync();
-        await _hubContext.Clients.All.SendAsync("CustomerssChanged");
-        return CreatedAtAction(nameof(GetById), new { id = customer.Id }, customer);
+        await _hubContext.Clients.All.SendAsync("CustomersChanged");
+        return CreatedAtAction(nameof(GetById), new { id = customer.Id }, newCustomer);
     }
 
 

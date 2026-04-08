@@ -1,4 +1,5 @@
-﻿using BarberShop.Data;
+﻿using AutoMapper;
+using BarberShop.Data;
 using BarberShop.DTOs;
 using BarberShop.Hubs;
 using BarberShop.Models;
@@ -18,21 +19,24 @@ public class ServicesController : ControllerBase
     private readonly RedisService _redis;
     private readonly IHubContext<WorkersHub> _hubContext;
     private readonly IConfiguration _configuration;
+    private readonly IMapper _mapper;
 
-    public ServicesController(AppDbContext context, IWebHostEnvironment environment, RedisService redis, IHubContext<WorkersHub> hubContext, IConfiguration configuration)
+    public ServicesController(AppDbContext context, IWebHostEnvironment environment, RedisService redis, IHubContext<WorkersHub> hubContext, IConfiguration configuration, IMapper mapper)
     {
         _context = context;
         _environment = environment;
         _redis = redis;
         _hubContext = hubContext;
         _configuration = configuration;
+        _mapper = mapper;
     }
 
     [HttpGet("all")]
     public async Task<IActionResult> GetAll()
     {
         var services = await _context.Services.ToListAsync();
-        return Ok(services);
+        var dtoList = _mapper.Map<List<ServiceDTO>>(services);
+        return Ok(dtoList);
     }
 
     [HttpGet("{id:int}")]
@@ -42,13 +46,7 @@ public class ServicesController : ControllerBase
         var service = await _context.Services.FindAsync(id);
         if (service == null)
             return NotFound();
-        var dto = new ServiceDTO
-        {
-            Name = service.Name,
-            Duration = service.Duration,
-            Price = service.Price,
-            Description = service.Description
-        };
+        var dto = _mapper.Map<ServiceDTO>(service);
 
         //await _redis.SetAsync(cacheKey, service, TimeSpan.FromMinutes(5));
         return Ok(dto);
@@ -86,7 +84,7 @@ public class ServicesController : ControllerBase
         //await _redis.InvalidateByPrefixAsync("services");
         // Notify clients about the update
         await _hubContext.Clients.All.SendAsync("ServicesChanged");
-        return Ok(service);
+        return Ok(updatedService);
     }
 
     [HttpPost]
@@ -119,7 +117,7 @@ public class ServicesController : ControllerBase
         //await _redis.InvalidateByPrefixAsync("services");
         await _hubContext.Clients.All.SendAsync("ServicesChanged");
 
-        return CreatedAtAction(nameof(GetById), new { id = obj.Id }, obj);
+        return CreatedAtAction(nameof(GetById), new { id = obj.Id }, dto);
     }
 
 

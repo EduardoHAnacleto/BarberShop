@@ -1,4 +1,5 @@
-﻿using BarberShop.Data;
+﻿using AutoMapper;
+using BarberShop.Data;
 using BarberShop.DTOs;
 using BarberShop.Hubs;
 using BarberShop.Models;
@@ -19,7 +20,9 @@ public class AppointmentsController : ControllerBase
     private readonly IHubContext<AppointmentsHub> _hubContext;
     private readonly IConfiguration _configuration;
     private readonly IAppointmentService _appointmentService;
-    public AppointmentsController(AppDbContext context, IWebHostEnvironment environment, RedisService redis, IHubContext<AppointmentsHub> hubContext, IConfiguration configuration, AppointmentService appointmentService)
+    private readonly IMapper _mapper;
+    public AppointmentsController(AppDbContext context, IWebHostEnvironment environment, RedisService redis,
+        IHubContext<AppointmentsHub> hubContext, IConfiguration configuration, IAppointmentService appointmentService, IMapper mapper)
     {
         _context = context;
         _environment = environment;
@@ -27,6 +30,7 @@ public class AppointmentsController : ControllerBase
         _hubContext = hubContext;
         _configuration = configuration;
         _appointmentService = appointmentService;
+        _mapper = mapper;
     }
 
     [HttpGet("all")]
@@ -36,7 +40,8 @@ public class AppointmentsController : ControllerBase
             .Include(p => p.Worker)
             .Include(p => p.Service)
             .OrderByDescending(a => a.ScheduledFor).ToListAsync();
-        return Ok(appointments);
+        var dtoList = _mapper.Map<List<AppointmentResponseDTO>>(appointments);
+        return Ok(dtoList);
     }
 
     [HttpGet("{id:int}")]
@@ -49,7 +54,8 @@ public class AppointmentsController : ControllerBase
             .FirstOrDefaultAsync(p => p.Id == id);
         if (appointment == null)
             return NotFound();
-        return Ok(appointment);
+        var dto = _mapper.Map<CustomerDTO>(appointment);
+        return Ok(dto);
     }
 
     [HttpPut("{id:int}")]
@@ -182,7 +188,8 @@ public class AppointmentsController : ControllerBase
             .Include(p => p.Service)
             .Where(a => a.ScheduledFor >= dateStart && a.ScheduledFor <= dateEnd)
             .OrderByDescending(a => a.ScheduledFor).ToListAsync();
-        return Ok(appointments);
+        var dtoList = _mapper.Map<List<AppointmentResponseDTO>>(appointments);
+        return Ok(dtoList);
     }
 
     [HttpGet("worker/{workerId:int}")]
@@ -194,7 +201,8 @@ public class AppointmentsController : ControllerBase
             .Include(p => p.Service)
             .Where(a => a.Worker.Id == workerId)
             .OrderByDescending(a => a.ScheduledFor).ToListAsync();
-        return Ok(appointments);
+        var dtoList = _mapper.Map<List<AppointmentResponseDTO>>(appointments);
+        return Ok(dtoList);
     }
     [HttpGet("customer/{customerId:int}")]
     public async Task<IActionResult> GetByCustomer(int customerId)
@@ -205,7 +213,8 @@ public class AppointmentsController : ControllerBase
             .Include(p => p.Service)
             .Where(a => a.Customer.Id == customerId)
             .OrderByDescending(a => a.ScheduledFor).ToListAsync();
-        return Ok(appointments);
+        var dtoList = _mapper.Map<List<AppointmentResponseDTO>>(appointments);
+        return Ok(dtoList);
     }
     [HttpGet("service/{serviceId:int}")]
     public async Task<IActionResult> GetByService(int serviceId)
@@ -216,7 +225,8 @@ public class AppointmentsController : ControllerBase
             .Include(p => p.Service)
             .Where(a => a.Service.Id == serviceId)
             .OrderByDescending(a => a.ScheduledFor).ToListAsync();
-        return Ok(appointments);
+        var dtoList = _mapper.Map<List<AppointmentResponseDTO>>(appointments);
+        return Ok(dtoList);
     }
     [HttpGet("status/{status}")]
     public async Task<IActionResult> GetByStatus(Status status)
@@ -228,6 +238,7 @@ public class AppointmentsController : ControllerBase
             .Where(a => a.Status == status)
             .OrderByDescending(a => a.Status)
             .ToListAsync();
-        return Ok(appointments);
+        var dtoList = _mapper.Map<List<AppointmentResponseDTO>>(appointments);
+        return Ok(dtoList);
     }
 }
