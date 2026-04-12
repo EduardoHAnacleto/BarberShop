@@ -1,5 +1,6 @@
 ﻿using BarberShop.Data;
 using BarberShop.Models;
+using BarberShop.Repositories.Interfaces;
 using Microsoft.EntityFrameworkCore;
 
 namespace BarberShop.Repositories;

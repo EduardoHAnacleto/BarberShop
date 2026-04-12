@@ -1,5 +1,12 @@
-﻿namespace BarberShop.Repositories;
+﻿using BarberShop.Data;
+using BarberShop.Models;
+using BarberShop.Repositories.Interfaces;
 
-public class ServiceRepository : IServiceRepository
+namespace BarberShop.Repositories;
+
+public class ServiceRepository : GenericRepository<Service>,IServiceRepository
 {
+    public ServiceRepository(AppDbContext context) : base(context)
+    {
+    }
 }

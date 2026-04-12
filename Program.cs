@@ -1,5 +1,8 @@
+using AutoMapper;
 using BarberShop.Data;
 using BarberShop.Hubs;
+using BarberShop.Repositories;
+using BarberShop.Repositories.Interfaces;
 using BarberShop.Services;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
@@ -19,7 +22,7 @@ builder.Services.AddControllers()
 builder.Services.AddDirectoryBrowser();
 
 //AutoMapper DTO - Model
-//builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
+builder.Services.AddAutoMapper(typeof(Program));
 
 // SignalR
 builder.Services.AddSignalR(options =>
@@ -29,6 +32,10 @@ builder.Services.AddSignalR(options =>
 
 // DI
 builder.Services.AddScoped<IAppointmentService, AppointmentService>();
+builder.Services.AddScoped<ICustomerRepository, CustomerRepository>();
+builder.Services.AddScoped<IUserRepository, UserRepository>();
+builder.Services.AddScoped<IServiceRepository, ServiceRepository>();
+builder.Services.AddScoped<IWorkerRepository, WorkerRepository>();
 
 // Swagger
 builder.Services.AddEndpointsApiExplorer();

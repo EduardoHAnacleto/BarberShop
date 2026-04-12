@@ -3,6 +3,7 @@ using BarberShop.Data;
 using BarberShop.DTOs;
 using BarberShop.Hubs;
 using BarberShop.Models;
+using BarberShop.Repositories.Interfaces;
 using BarberShop.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
@@ -20,9 +21,12 @@ public class WorkersController : ControllerBase
     private readonly IHubContext<WorkersHub> _hubContext;
     private readonly IConfiguration _configuration;
     private readonly IMapper _mapper;
+    private readonly IWorkerRepository _repository;
+    private readonly IWorkerService _workerService;
 
     public WorkersController(AppDbContext context, IWebHostEnvironment environment, RedisService redis,
-        IHubContext<WorkersHub> hubContext, IConfiguration configuration, IMapper mapper)
+        IHubContext<WorkersHub> hubContext, IConfiguration configuration, IMapper mapper, IWorkerRepository repository,
+        IWorkerService workerService)
     {
         _context = context;
         _environment = environment;
@@ -30,42 +34,27 @@ public class WorkersController : ControllerBase
         _hubContext = hubContext;
         _configuration = configuration;
         _mapper = mapper;
+        _repository = repository;
+        _workerService = workerService;
     }
 
     [HttpGet("all")]
     public async Task<IActionResult> GetAll()
     {
-        var workers = await _context.Workers.Include(w => w.ProvidedServices).ToListAsync();
+        var workers = await _repository.GetAllAsync(
+            includes : w => w.ProvidedServices);
         var dtoList = _mapper.Map<List<WorkerDTO>>(workers);
+
         return Ok(dtoList);
     }
 
     [HttpGet("{id:int}")]
     public async Task<IActionResult> GetById(int id)
     {
-        var dto = await _context.Workers
-            .Where(w => w.Id == id)
-            .Select(w => new WorkerDTO
-            {
-                Id = w.Id,
-                Name = w.Name,
-                PhoneNumber = w.PhoneNumber,
-                Address = w.Address,
-                DateOfBirth = w.DateOfBirth,
-                WagePerHour = w.WagePerHour,
-                Position = w.Position,
-                ProvidedServices = w.ProvidedServices
-                    .Select(s => new ServiceDTO
-                    {
-                        Name = s.Name,
-                        Duration = s.Duration,
-                        Price = s.Price
-                    }).ToList()
-            })
-            .FirstOrDefaultAsync();
-
-        if (dto == null)
+        var obj = await _repository.GetByIdAsync(id, w => w.ProvidedServices);
+        if (obj == null)
             return NotFound();
+        var dto = _mapper.Map<WorkerDTO>(obj);
 
         return Ok(dto);
     }
@@ -73,10 +62,10 @@ public class WorkersController : ControllerBase
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id)
     {
-        var worker = await _context.Workers.FindAsync(id);
+        var worker = await _repository.GetByIdAsync(id);
         if (worker == null)
             return NotFound();
-        _context.Workers.Remove(worker);
+        _repository.Delete(worker);
         await _context.SaveChangesAsync();
         // Invalidate cache for workers
         //await _redis.InvalidateByPrefixAsync("workers");
@@ -88,26 +77,14 @@ public class WorkersController : ControllerBase
     [HttpPut("{id:int}")]
     public async Task<IActionResult> Update([FromBody] WorkerDTO worker, int id)
     {
-        var existingWorker = await _context.Workers.FindAsync(id);
+        var existingWorker = await _repository.GetByIdAsync(id, x => x.ProvidedServices);
         if (existingWorker == null)
             return NotFound();
-        var services = await _context.Services
-            .Where(s => worker.ServicesId.Contains(s.Id))
-            .ToListAsync();
-
-        existingWorker.Name = worker.Name;
-        existingWorker.PhoneNumber = worker.PhoneNumber;
-        existingWorker.Address = worker.Address;
-        existingWorker.DateOfBirth = worker.DateOfBirth;
-        existingWorker.ProvidedServices = services;
-        existingWorker.WagePerHour = worker.WagePerHour;
-        existingWorker.Position = worker.Position;
-        existingWorker.Email = worker.Email;
+        _mapper.Map(worker, existingWorker);
         existingWorker.LastUpdatedAt = DateTime.UtcNow;
-        await _context.SaveChangesAsync();
-        // Invalidate cache for workers
+        _repository.Update(existingWorker);
+        await _context.SaveChangesAsync(); 
         //await _redis.InvalidateByPrefixAsync("workers");
-        // Notify clients about the update
         await _hubContext.Clients.All.SendAsync("WorkersChanged");
         return NoContent();
     }
@@ -139,34 +116,14 @@ public class WorkersController : ControllerBase
         {
             return BadRequest();
         }
-        var serviceList = new List<Service>();
-        foreach (var providedService in worker.ProvidedServices)
-        {
-            var serviceId = await _context.Services
-                .FindAsync(providedService.Id);
-            if (serviceId == null)
-            {
-                return BadRequest($"Service with ID {providedService.Id} does not exist.");
-            }
-            serviceList.Add(serviceId);
-        }
 
-        var newWorker = new Worker
-        {
-            Name = worker.Name,
-            PhoneNumber = worker.PhoneNumber,
-            Address = worker.Address,
-            DateOfBirth = worker.DateOfBirth,
-            ProvidedServices = serviceList,
-            WagePerHour = worker.WagePerHour,
-            Position = worker.Position,
-            Email = worker.Email
-        };
-        await _context.Workers.AddAsync(newWorker);
+        var newWorker = await _workerService.CreateFromDTO(worker);
+
+
+        await _repository.AddAsync(newWorker);
         await _context.SaveChangesAsync();
-        // Invalidate cache for workers
         //await _redis.InvalidateByPrefixAsync("workers");
-        // Notify clients about the new worker
+
         await _hubContext.Clients.All.SendAsync("WorkersChanged");
         return CreatedAtAction(nameof(GetById), new { id = newWorker.Id }, worker);
     }
@@ -174,35 +131,20 @@ public class WorkersController : ControllerBase
     [HttpGet("by-worker/{id:int}")]
     public async Task<IActionResult> GetServicesByWorker(int id) // Fix
     {
-        var worker = await _context.Workers.Include(w => w.ProvidedServices).FirstOrDefaultAsync(w => w.Id == id);
+        var worker = await _repository.GetByIdAsync(id, p => p.ProvidedServices);
         if (worker == null)
             return NotFound();
-        var dtoList = worker.ProvidedServices.Select(s => new ServiceDTO
-        {
-            Name = s.Name,
-            Duration = s.Duration,
-            Price = s.Price
-        }).ToList();
+        var dtoList = _mapper.Map<List<ServiceDTO>>(worker.ProvidedServices);
         return Ok(dtoList);
     }
 
-    [HttpGet("by-service/{serviceName}")]
-    public async Task<IActionResult> GetWorkersByService(string serviceName)
+    [HttpGet("by-service/{id:int}")]
+    public async Task<IActionResult> GetWorkersByService(int id)
     {
-        var list = await _context.Workers.Where(s => s.ProvidedServices.Any(p => p.Name == serviceName)).ToListAsync();
+        var list = await _repository.GetAllAsync(s => s.ProvidedServices.Any(p => p.Id == id));
         if (!list.Any())
             return NotFound();
-        var dtoList = list.Select(w => new WorkerDTO
-        {
-            Id = w.Id,
-            Name = w.Name,
-            PhoneNumber = w.PhoneNumber,
-            Address = w.Address,
-            DateOfBirth = w.DateOfBirth,
-            WagePerHour = w.WagePerHour,
-            Position = w.Position,
-            Email = w.Email
-        }).ToList();
+        var dtoList = _mapper.Map<List<WorkerDTO>>(list);
         return Ok(dtoList);
     }
 }

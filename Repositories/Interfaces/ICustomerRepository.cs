@@ -1,6 +1,6 @@
 ﻿using BarberShop.Models;
 
-namespace BarberShop.Repositories;
+namespace BarberShop.Repositories.Interfaces;
 
 public interface ICustomerRepository : IRepository<Customer>
 {

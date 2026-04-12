@@ -3,6 +3,7 @@ using BarberShop.Data;
 using BarberShop.DTOs;
 using BarberShop.Hubs;
 using BarberShop.Models;
+using BarberShop.Repositories.Interfaces;
 using BarberShop.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
@@ -20,8 +21,10 @@ public class CustomersController : ControllerBase
     private readonly IHubContext<CustomersHub> _hubContext;
     private readonly IConfiguration _configuration;
     private readonly IMapper _mapper;
+    private readonly ICustomerRepository _repository;
 
-    public CustomersController(AppDbContext context, IWebHostEnvironment environment, RedisService redis, IHubContext<CustomersHub> hubContext, IConfiguration configuration, IMapper mapper)
+    public CustomersController(AppDbContext context, IWebHostEnvironment environment, RedisService redis,
+        IHubContext<CustomersHub> hubContext, IConfiguration configuration, IMapper mapper, ICustomerRepository repository)
     {
         _context = context;
         _environment = environment;
@@ -29,20 +32,21 @@ public class CustomersController : ControllerBase
         _hubContext = hubContext;
         _configuration = configuration;
         _mapper = mapper;
+        _repository = repository;
     }
 
     [HttpGet("all")]
     public async Task<IActionResult> GetAll()
     {
-        var customerList = await _context.Customers.ToListAsync();
+        var customerList = await _repository.GetAllAsync();
         var dtoList = _mapper.Map<List<CustomerDTO>>(customerList);
-        return Ok(await _context.Customers.ToListAsync());
+        return Ok(dtoList);
     }
 
     [HttpGet("{id:int}")]
     public async Task<IActionResult> GetById(int id)
     {
-        var customer = await _context.Customers.FindAsync(id);
+        var customer = await _repository.GetByIdAsync(id);
         if (customer == null)
             return NotFound();
         var dto = _mapper.Map<CustomerDTO>(customer);
@@ -52,10 +56,10 @@ public class CustomersController : ControllerBase
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id)
     {
-        var customer = await _context.Customers.FindAsync(id);
+        var customer = await _repository.GetByIdAsync(id);
         if (customer == null)
             return NotFound();
-        _context.Customers.Remove(customer);
+        _repository.Delete(customer);
         await _context.SaveChangesAsync();
         await _hubContext.Clients.All.SendAsync("CustomersChanged");
         return NoContent();
@@ -64,33 +68,28 @@ public class CustomersController : ControllerBase
     [HttpPut("{id:int}")]
     public async Task<IActionResult> Update(int id, [FromBody] CustomerDTO updatedCustomer)
     {
-        var customer = await _context.Customers.FindAsync(id);
+        var customer = await _repository.GetByIdAsync(id);
         if (customer == null)
             return NotFound();
-        // Update fields
-        customer.Name = updatedCustomer.Name;
-        customer.PhoneNumber = updatedCustomer.PhoneNumber;
-        customer.Email = updatedCustomer.Email;
-        customer.DateOfBirth = updatedCustomer.DateOfBirth;
+        
+        _mapper.Map(updatedCustomer, customer);
+        customer.LastUpdatedAt = DateTime.UtcNow;
+        _repository.Update(customer);
         await _context.SaveChangesAsync();
         await _hubContext.Clients.All.SendAsync("CustomersChanged");
-        return Ok(updatedCustomer);
+        return Ok(_mapper.Map<CustomerDTO>(customer));
     }
 
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CustomerDTO newCustomer)
     {
-        var customer = new Customer
-        {
-            Name = newCustomer.Name,
-            PhoneNumber = newCustomer.PhoneNumber,
-            Email = newCustomer.Email,
-            DateOfBirth = newCustomer.DateOfBirth
-        };
-        await _context.Customers.AddAsync(customer);
+        var customer = new Customer();
+        customer = _mapper.Map(newCustomer, customer);
+
+        await _repository.AddAsync(customer);
         await _context.SaveChangesAsync();
         await _hubContext.Clients.All.SendAsync("CustomersChanged");
-        return CreatedAtAction(nameof(GetById), new { id = customer.Id }, newCustomer);
+        return CreatedAtAction(nameof(GetById), new { id = customer.Id }, _mapper.Map<CustomerDTO>(customer));
     }
 
 

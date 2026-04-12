@@ -3,6 +3,7 @@ using BarberShop.Data;
 using BarberShop.DTOs;
 using BarberShop.Hubs;
 using BarberShop.Models;
+using BarberShop.Repositories.Interfaces;
 using BarberShop.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -21,9 +22,10 @@ public class UsersController : ControllerBase
     private readonly IHubContext<UsersHub> _hubContext;
     private readonly IConfiguration _configuration;
     private readonly IMapper _mapper;
+    private readonly IUserRepository _repository;
 
     public UsersController(AppDbContext context, IWebHostEnvironment environment, RedisService redis,
-        IHubContext<UsersHub> hubContext, IConfiguration configuration, IMapper mapper)
+        IHubContext<UsersHub> hubContext, IConfiguration configuration, IMapper mapper, IUserRepository repository)
     {
         _context = context;
         _environment = environment;
@@ -31,12 +33,13 @@ public class UsersController : ControllerBase
         _hubContext = hubContext;
         _configuration = configuration;
         _mapper = mapper;
+        _repository = repository;
     }
 
     [HttpGet("all")]
     public async Task<IActionResult> GetAll()
     {
-        var list = await _context.Users.ToListAsync();
+        var list = await _repository.GetAllAsync();
         var dtoList = _mapper.Map<List<UserResponseDTO>>(list);
         return Ok(dtoList);
     }
@@ -44,10 +47,10 @@ public class UsersController : ControllerBase
     [HttpGet("{id}")]
     public async Task<IActionResult> GetById(int id)
     {
-        var user = await _context.Users.FindAsync(id);
+        var user = await _repository.GetByIdAsync(id);
         if (user == null)
             return NotFound();
-        var dto = _mapper.Map<List<UserResponseDTO>>(user);
+        var dto = _mapper.Map<UserResponseDTO>(user);
         return Ok(dto);
     }
 
@@ -55,10 +58,10 @@ public class UsersController : ControllerBase
     [HttpDelete("{id}")]
     public async Task<IActionResult> Delete(int id)
     {
-        var user = await _context.Users.FindAsync(id);
+        var user = await _repository.GetByIdAsync(id);
         if (user == null)
             return NotFound();
-        _context.Users.Remove(user);
+        _repository.Delete(user);
         await _context.SaveChangesAsync();
         await _hubContext.Clients.All.SendAsync("UsersChanged");
         return NoContent();
@@ -68,16 +71,11 @@ public class UsersController : ControllerBase
     [HttpPut("{id}")]
      public async Task<IActionResult> Update(int id, [FromBody] UserRequestDTO updatedUser)
     {
-        var user = await _context.Users.AsTracking().FirstOrDefaultAsync(u => u.Id == id);
+        var user = await _repository.GetByIdAsync(id);
         if (user == null)
             return NotFound();
-        user.Email = updatedUser.Email;
-        user.PasswordHash = updatedUser.PasswordHash;
-        user.Role = updatedUser.Role;
-        user.IsActive = updatedUser.IsActive;
-        user.WorkerId = updatedUser.WorkerId;
-        user.CustomerId = updatedUser.CustomerId;
 
+        _repository.Update(user);
         await _context.SaveChangesAsync();
         await _hubContext.Clients.All.SendAsync("UsersChanged");
         return NoContent();
@@ -87,16 +85,9 @@ public class UsersController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] UserRequestDTO newUser)
     {
-        var user = new User
-        {
-            Email = newUser.Email,
-            PasswordHash = newUser.PasswordHash,
-            Role = newUser.Role,
-            IsActive = true,
-            CustomerId = newUser.CustomerId,
-            WorkerId = newUser.WorkerId
-        };
-        _context.Users.Add(user);
+        var user = _mapper.Map<User>(newUser);
+
+        await _repository.AddAsync(user);
         await _context.SaveChangesAsync();
         await _hubContext.Clients.All.SendAsync("UsersChanged");
         var dto = _mapper.Map<List<UserResponseDTO>>(user);
