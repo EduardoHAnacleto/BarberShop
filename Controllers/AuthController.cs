@@ -36,7 +36,6 @@ public class AuthController : ControllerBase
             throw new Exception($"User is locked. Try again in {lockOutEnd} minutes");
         }
 
-
         // Secret check
         if (!BCrypt.Net.BCrypt.Verify(dto.Password, user.PasswordHash))
         {

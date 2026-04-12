@@ -1,6 +1,7 @@
 using AutoMapper;
 using BarberShop.Data;
 using BarberShop.Hubs;
+using BarberShop.Models;
 using BarberShop.Repositories;
 using BarberShop.Repositories.Interfaces;
 using BarberShop.Services;
@@ -98,6 +99,12 @@ else
     );
 }
 
+// Business Hours Schedule settings
+builder.Services.Configure<BusinessHoursSettings>(
+    builder.Configuration.GetSection("BusinessHours")
+);
+
+
 builder.Services.AddMemoryCache();
 
 var app = builder.Build();
@@ -140,6 +147,8 @@ app.MapHub<ServicesHub>("/servicesHub")
 app.MapHub<CustomersHub>("/customersHub")
     .RequireCors("FrontendPolicy");
 app.MapHub<AppointmentsHub>("/appointmentsHub")
+    .RequireCors("FrontendPolicy");
+app.MapHub<UsersHub>("/usersHub")
     .RequireCors("FrontendPolicy");
 
 app.Run();

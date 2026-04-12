@@ -89,7 +89,8 @@ public class AppointmentsController : ControllerBase
             return NotFound();
 
         var dto = _mapper.Map<AppointmentRequestDTO>(appointment);
-        if (updatedAppointment.Status == Status.Completed && updatedAppointment.CompletedAt == null)
+        if (updatedAppointment.Status == Status.Completed && updatedAppointment.CompletedAt == null
+            && updatedAppointment.Status == Status.Cancelled)
             appointment.CompletedAt = DateTime.UtcNow;
         else
             appointment.CompletedAt = null;
@@ -123,33 +124,17 @@ public class AppointmentsController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] AppointmentRequestDTO newAppointment)
     {
-        var obj = await _repository.GetByIdAsync(newAppointment.CustomerId);
-        if (obj.Customer == null)
-            return BadRequest("Invalid Customer");
-        if (obj.Worker == null)
-            return BadRequest("Invalid Worker");
-        if (obj.Service == null)
-            return BadRequest("Invalid Service");
+        var result = await _appointmentService.CreateFromDTO(newAppointment);
 
-        var workerAvailabilityTask = _appointmentService.IsWorkerAvailable(newAppointment.WorkerId, newAppointment.ScheduledFor, obj.Service.Duration);
-        var customerAvailabilityTask = _appointmentService.IsCustomerAvailable(newAppointment.CustomerId, newAppointment.ScheduledFor, obj.Service.Duration);
+        if (!result.Success)
+            return BadRequest(result.Error);
 
-        await Task.WhenAll(workerAvailabilityTask, customerAvailabilityTask);
-        var isWorkerAvailable = workerAvailabilityTask.Result;
-        var isCustomerAvailable = customerAvailabilityTask.Result;
-
-        if (!isWorkerAvailable)
-            return BadRequest("Worker is not available at the selected time");
-        if (!isCustomerAvailable)
-            return BadRequest("Customer has an appointment already scheduled at the selected time");
-
-        var appointment = _mapper.Map<Appointment>(newAppointment);
-        await _repository.AddAsync(appointment);
+        await _repository.AddAsync(result.Data!);
         await _context.SaveChangesAsync();
 
         await _hubContext.Clients.All.SendAsync("AppointmentsChanged");
 
-        var response = _mapper.Map<AppointmentResponseDTO>(appointment);
+        var response = _mapper.Map<AppointmentResponseDTO>(result.Data);
 
         return CreatedAtAction(nameof(GetById), new { id = response.Id }, response);
     }

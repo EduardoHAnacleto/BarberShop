@@ -124,6 +124,15 @@ public class AppDbContext : DbContext
             entity.Property(e => e.LockoutEnd).HasColumnName("UserLockoutEnd");
         });
 
+        modelBuilder.Entity<WorkingHours>(entity =>
+        {
+            entity.ToTable("WorkingHours");
+
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.ClosedFrom).HasColumnName("HolidayClosedFrom");
+            entity.Property(e => e.ClosedUntil).HasColumnName("HolidayClosedUntil");
+            entity.Property(e => e.Reason).HasColumnName("HolidayReason");
+        });
     }
 }
 

@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace BarberShop.Repositories;
 
-public class AppointmentRepository : GenericRepository<Appointment> ,IAppointmentRepository
+public class AppointmentRepository : GenericRepository<Appointment>, IAppointmentRepository
 {
     public AppointmentRepository(AppDbContext context) : base(context)
     {
@@ -75,5 +75,16 @@ public class AppointmentRepository : GenericRepository<Appointment> ,IAppointmen
         obj.CompletedAt = DateTime.UtcNow;
         _context.Appointments.Update(obj);
         return;
-    } 
+    }
+
+    public async Task<List<Appointment>> VirtualDeleteRange(List<Appointment> appointments)
+    {
+        foreach (var appointment in appointments)
+        {
+            appointment.Status = Status.Cancelled;
+            appointment.CompletedAt = DateTime.UtcNow;
+        }
+        _context.UpdateRange(appointments);
+        return appointments;
+    }
 }

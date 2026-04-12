@@ -11,4 +11,5 @@ public interface IAppointmentRepository : IRepository<Appointment>
     Task<List<Appointment>?> GetByService(int serviceId);
     Task<List<Appointment>?> GetByStatus(Status status);
     Task VirtualDelete(Appointment obj);
+    Task<List<Appointment>> VirtualDeleteRange(List<Appointment> appointments);
 }
