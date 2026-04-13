@@ -1,5 +1,6 @@
 ﻿using BarberShop.Models;
 using BarberShop.Repositories.Interfaces;
+using BarberShop.Services.Interfaces;
 using Microsoft.Extensions.Options;
 
 namespace BarberShop.Services;

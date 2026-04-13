@@ -1,4 +1,5 @@
 ﻿using BarberShop.Models;
+using Microsoft.AspNetCore.Components;
 using Microsoft.EntityFrameworkCore;
 
 namespace BarberShop.Data;

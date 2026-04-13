@@ -5,6 +5,7 @@ using BarberShop.Hubs;
 using BarberShop.Models;
 using BarberShop.Repositories.Interfaces;
 using BarberShop.Services;
+using BarberShop.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
@@ -16,81 +17,76 @@ namespace BarberShop.Controllers;
 [Route("users")]
 public class UsersController : ControllerBase
 {
-    private readonly AppDbContext _context;
-    private readonly IWebHostEnvironment _environment;
-    private readonly RedisService _redis;
-    private readonly IHubContext<UsersHub> _hubContext;
-    private readonly IConfiguration _configuration;
-    private readonly IMapper _mapper;
-    private readonly IUserRepository _repository;
+    private readonly IUsersService _usersService;
 
-    public UsersController(AppDbContext context, IWebHostEnvironment environment, RedisService redis,
-        IHubContext<UsersHub> hubContext, IConfiguration configuration, IMapper mapper, IUserRepository repository)
+    public UsersController(IUsersService usersService)
     {
-        _context = context;
-        _environment = environment;
-        _redis = redis;
-        _hubContext = hubContext;
-        _configuration = configuration;
-        _mapper = mapper;
-        _repository = repository;
+        _usersService = usersService;
     }
 
     [HttpGet("all")]
     public async Task<IActionResult> GetAll()
     {
-        var list = await _repository.GetAllAsync();
-        var dtoList = _mapper.Map<List<UserResponseDTO>>(list);
-        return Ok(dtoList);
+        var result = await _usersService.GetAllAsync();
+        return Ok(result);
     }
 
-    [HttpGet("{id}")]
+    [HttpGet("{id:int}")]
     public async Task<IActionResult> GetById(int id)
     {
-        var user = await _repository.GetByIdAsync(id);
-        if (user == null)
-            return NotFound();
-        var dto = _mapper.Map<UserResponseDTO>(user);
-        return Ok(dto);
-    }
+        var result = await _usersService.GetByIdAsync(id);
 
-    [Authorize(Roles = "Admin")]
-    [HttpDelete("{id}")]
-    public async Task<IActionResult> Delete(int id)
-    {
-        var user = await _repository.GetByIdAsync(id);
-        if (user == null)
-            return NotFound();
-        _repository.Delete(user);
-        await _context.SaveChangesAsync();
-        await _hubContext.Clients.All.SendAsync("UsersChanged");
-        return NoContent();
-    }
-
-    [Authorize(Roles = "Admin")]
-    [HttpPut("{id}")]
-     public async Task<IActionResult> Update(int id, [FromBody] UserRequestDTO updatedUser)
-    {
-        var user = await _repository.GetByIdAsync(id);
-        if (user == null)
+        if (result == null)
             return NotFound();
 
-        _repository.Update(user);
-        await _context.SaveChangesAsync();
-        await _hubContext.Clients.All.SendAsync("UsersChanged");
-        return NoContent();
+        return Ok(result);
     }
 
     [Authorize(Roles = "Admin")]
     [HttpPost]
-    public async Task<IActionResult> Create([FromBody] UserRequestDTO newUser)
+    public async Task<IActionResult> Create([FromBody] UserRequestDTO dto)
     {
-        var user = _mapper.Map<User>(newUser);
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
 
-        await _repository.AddAsync(user);
-        await _context.SaveChangesAsync();
-        await _hubContext.Clients.All.SendAsync("UsersChanged");
-        var dto = _mapper.Map<List<UserResponseDTO>>(user);
-        return CreatedAtAction(nameof(GetById), new { id = user.Id }, dto);
+        var result = await _usersService.Create(dto);
+
+        if (!result.Success)
+            return BadRequest(result.Error);
+
+        return CreatedAtAction(nameof(GetById), new { id = result.Data!.Id }, result.Data);
+    }
+
+    [Authorize(Roles = "Admin")]
+    [HttpPut("{id:int}")]
+    public async Task<IActionResult> Update(int id, [FromBody] UserRequestDTO dto)
+    {
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
+        var result = await _usersService.Update(id, dto);
+
+        if (!result.Success)
+            return BadRequest(result.Error);
+
+        if (result.Data == null)
+            return NotFound();
+
+        return NoContent();
+    }
+
+    [Authorize(Roles = "Admin")]
+    [HttpDelete("{id:int}")]
+    public async Task<IActionResult> Delete(int id)
+    {
+        var result = await _usersService.Delete(id);
+
+        if (!result.Success)
+            return BadRequest(result.Error);
+
+        if (result.Data == null)
+            return NotFound();
+
+        return NoContent();
     }
 }

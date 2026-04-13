@@ -1,6 +1,6 @@
 ﻿namespace BarberShop.Models;
 
-public class Result<T>
+public class Result<T>  
 {
     public bool Success { get; set; }
     public string? Error { get; set; }

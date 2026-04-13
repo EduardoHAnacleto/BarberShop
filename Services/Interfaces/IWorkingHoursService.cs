@@ -1,6 +1,6 @@
 ﻿using BarberShop.Models;
 
-namespace BarberShop.Services;
+namespace BarberShop.Services.Interfaces;
 
 public interface IWorkingHoursService
 {

@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace BarberShop.Services;
 
-public class RedisService
+public class RedisService 
 {
     private readonly IDatabase _db;
     private readonly IConnectionMultiplexer _redis;

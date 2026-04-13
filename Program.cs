@@ -5,6 +5,7 @@ using BarberShop.Models;
 using BarberShop.Repositories;
 using BarberShop.Repositories.Interfaces;
 using BarberShop.Services;
+using BarberShop.Services.Interfaces;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -32,11 +33,12 @@ builder.Services.AddSignalR(options =>
 });
 
 // DI
-builder.Services.AddScoped<IAppointmentService, AppointmentService>();
+builder.Services.AddScoped<IAppointmentsService, AppointmentsService>();
 builder.Services.AddScoped<ICustomerRepository, CustomerRepository>();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IServiceRepository, ServiceRepository>();
 builder.Services.AddScoped<IWorkerRepository, WorkerRepository>();
+
 
 // Swagger
 builder.Services.AddEndpointsApiExplorer();

@@ -1,11 +1,11 @@
 ﻿namespace BarberShop.Models;
 
-public class BusinessHoursSettings
+public class BusinessHoursSettings 
 {
     public Dictionary<DayOfWeek, DaySchedule> Days { get; set; } = new();
 }
 
-public class DaySchedule
+public class DaySchedule 
 {
     public TimeSpan? StartTime { get; set; }
     public TimeSpan? EndTime { get; set; }

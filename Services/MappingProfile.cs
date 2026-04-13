@@ -11,6 +11,7 @@ namespace BarberShop.Services
             CreateMap<Service, ServiceDTO>();
             CreateMap<Customer, CustomerDTO>();
             CreateMap<Worker, WorkerDTO>();
+            CreateMap<AppointmentRequestDTO, Appointment>();
             CreateMap<Appointment, AppointmentResponseDTO>()
                 .ForMember(dest => dest.WorkerName, opt => opt.MapFrom(src => src.Worker.Name))
                 .ForMember(dest => dest.CustomerName, opt => opt.MapFrom(src => src.Customer.Name))
