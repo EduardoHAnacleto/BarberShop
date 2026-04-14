@@ -9,26 +9,21 @@ using Microsoft.AspNetCore.SignalR;
 
 namespace BarberShop.Services;
 
-public class ServicesService : IServicesService
+public class ServicesService : BaseService, IServicesService
 {
-    private readonly IServiceRepository _repository;
+    private readonly IUnitOfWork _uow;
     private readonly IMapper _mapper;
-    private readonly AppDbContext _context;
-    private readonly RedisService _redis;
-    private readonly IHubContext<WorkersHub> _hubContext;
+    private readonly IHubContext<ServicesHub> _hub; 
 
     public ServicesService(
-        IServiceRepository repository,
+        IUnitOfWork uow,
         IMapper mapper,
-        AppDbContext context,
         RedisService redis,
-        IHubContext<WorkersHub> hubContext)
+        IHubContext<ServicesHub> hub) : base(redis)
     {
-        _repository = repository;
+        _uow = uow;
         _mapper = mapper;
-        _context = context;
-        _redis = redis;
-        _hubContext = hubContext;
+        _hub = hub;
     }
 
     // =========================
@@ -36,19 +31,12 @@ public class ServicesService : IServicesService
     // =========================
     public async Task<List<ServiceDTO>> GetAllAsync()
     {
-        var cacheKey = "services:all";
+        var result = await GetCachedAsync(
+            "services:all",
+            async () => _mapper.Map<List<ServiceDTO>>(await _uow.Services.GetAllAsync())
+        );
 
-        var cached = await _redis.GetAsync<List<ServiceDTO>>(cacheKey);
-        if (cached != null)
-            return cached;
-
-        var services = await _repository.GetAllAsync();
-
-        var dtoList = _mapper.Map<List<ServiceDTO>>(services);
-
-        await _redis.SetAsync(cacheKey, dtoList, TimeSpan.FromMinutes(10));
-
-        return dtoList;
+        return result ?? [];
     }
 
     // =========================
@@ -56,22 +44,14 @@ public class ServicesService : IServicesService
     // =========================
     public async Task<ServiceDTO?> GetByIdAsync(int id)
     {
-        var cacheKey = $"services:{id}";
-
-        var cached = await _redis.GetAsync<ServiceDTO>(cacheKey);
-        if (cached != null)
-            return cached;
-
-        var service = await _repository.GetByIdAsync(id);
-
-        if (service == null)
-            return null;
-
-        var dto = _mapper.Map<ServiceDTO>(service);
-
-        await _redis.SetAsync(cacheKey, dto, TimeSpan.FromMinutes(10));
-
-        return dto;
+        return await GetCachedAsync(
+            $"services:{id}",
+            async () =>
+            {
+                var service = await _uow.Services.GetByIdAsync(id);
+                return service == null ? null : _mapper.Map<ServiceDTO>(service);
+            }
+        );
     }
 
     // =========================
@@ -90,15 +70,11 @@ public class ServicesService : IServicesService
 
         var entity = _mapper.Map<Service>(dto);
 
-        await _repository.AddAsync(entity);
-        await _context.SaveChangesAsync();
+        await _uow.Services.AddAsync(entity);
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("services", _hub, "ServicesChanged");
 
-        await _redis.InvalidateByPrefixAsync("services");
-        await _hubContext.Clients.All.SendAsync("ServicesChanged");
-
-        var resultDto = _mapper.Map<ServiceDTO>(entity);
-
-        return Result<ServiceDTO>.Ok(resultDto);
+        return Result<ServiceDTO>.Ok(_mapper.Map<ServiceDTO>(entity));
     }
 
     // =========================
@@ -106,7 +82,7 @@ public class ServicesService : IServicesService
     // =========================
     public async Task<Result<ServiceDTO>> Update(int id, ServiceDTO dto)
     {
-        var service = await _repository.GetByIdAsync(id);
+        var service = await _uow.Services.GetByIdAsync(id);
 
         if (service == null)
             return Result<ServiceDTO>.Ok(null);
@@ -114,15 +90,11 @@ public class ServicesService : IServicesService
         _mapper.Map(dto, service);
         service.LastUpdatedAt = DateTime.UtcNow;
 
-        _repository.Update(service);
-        await _context.SaveChangesAsync();
+        _uow.Services.Update(service);
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("services", _hub, "ServicesChanged");
 
-        await _redis.InvalidateByPrefixAsync("services");
-        await _hubContext.Clients.All.SendAsync("ServicesChanged");
-
-        var resultDto = _mapper.Map<ServiceDTO>(service);
-
-        return Result<ServiceDTO>.Ok(resultDto);
+        return Result<ServiceDTO>.Ok(_mapper.Map<ServiceDTO>(service));
     }
 
     // =========================
@@ -130,16 +102,14 @@ public class ServicesService : IServicesService
     // =========================
     public async Task<Result<ServiceDTO>> Delete(int id)
     {
-        var service = await _repository.GetByIdAsync(id);
+        var service = await _uow.Services.GetByIdAsync(id);
 
         if (service == null)
             return Result<ServiceDTO>.Ok(null);
 
-        _repository.Delete(service);
-        await _context.SaveChangesAsync();
-
-        await _redis.InvalidateByPrefixAsync("services");
-        await _hubContext.Clients.All.SendAsync("ServicesChanged");
+        _uow.Services.Delete(service);
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("services", _hub, "ServicesChanged");
 
         return Result<ServiceDTO>.Ok(null);
     }

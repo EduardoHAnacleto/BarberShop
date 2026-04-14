@@ -34,10 +34,10 @@ builder.Services.AddSignalR(options =>
 
 // DI
 builder.Services.AddScoped<IAppointmentsService, AppointmentsService>();
-builder.Services.AddScoped<ICustomerRepository, CustomerRepository>();
-builder.Services.AddScoped<IUserRepository, UserRepository>();
-builder.Services.AddScoped<IServiceRepository, ServiceRepository>();
-builder.Services.AddScoped<IWorkerRepository, WorkerRepository>();
+builder.Services.AddScoped<ICustomersService, CustomersService>();
+builder.Services.AddScoped<IUsersService, UsersService>();
+builder.Services.AddScoped<IWorkersService, WorkersService>();
+builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 
 
 // Swagger

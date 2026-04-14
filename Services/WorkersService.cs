@@ -11,29 +11,21 @@ using StackExchange.Redis;
 
 namespace BarberShop.Services;
 
-public class WorkerService : IWorkersService
+public class WorkersService : BaseService, IWorkersService
 {
-    private readonly IWorkerRepository _repository;
-    private readonly IServiceRepository _serviceRepository;
+    private readonly IUnitOfWork _uow;
     private readonly IMapper _mapper;
-    private readonly AppDbContext _context;
-    private readonly RedisService _redis;
-    private readonly IHubContext<WorkersHub> _hubContext;
+    private readonly IHubContext<WorkersHub> _hub;
 
-    public WorkerService(
-        IWorkerRepository workerRepository,
-        IServiceRepository serviceRepository,
+    public WorkersService(
+        IUnitOfWork uow,
         IMapper mapper,
-        AppDbContext context,
         RedisService redis,
-        IHubContext<WorkersHub> hubContext)
+        IHubContext<WorkersHub> hub) : base(redis)
     {
-        _repository = workerRepository;
-        _serviceRepository = serviceRepository;
+        _uow = uow;
         _mapper = mapper;
-        _context = context;
-        _redis = redis;
-        _hubContext = hubContext;
+        _hub = hub;
     }
 
     // =========================
@@ -41,20 +33,16 @@ public class WorkerService : IWorkersService
     // =========================
     public async Task<List<WorkerDTO>> GetAllAsync()
     {
-        var cacheKey = "workers:all";
+        var result = await GetCachedAsync(
+            "workers:all",
+            async () => _mapper.Map<List<WorkerDTO>>(
+                await _uow.Workers.GetAllAsync(
+                    null,
+                    null,
+                    w => w.ProvidedServices))
+        );
 
-        var cached = await _redis.GetAsync<List<WorkerDTO>>(cacheKey);
-        if (cached != null)
-            return cached;
-
-        var workers = await _repository.GetAllAsync(
-            includes: w => w.ProvidedServices);
-
-        var dtoList = _mapper.Map<List<WorkerDTO>>(workers);
-
-        await _redis.SetAsync(cacheKey, dtoList, TimeSpan.FromMinutes(10));
-
-        return dtoList;
+        return result ?? [];
     }
 
     // =========================
@@ -62,22 +50,14 @@ public class WorkerService : IWorkersService
     // =========================
     public async Task<WorkerDTO?> GetByIdAsync(int id)
     {
-        var cacheKey = $"workers:{id}";
-
-        var cached = await _redis.GetAsync<WorkerDTO>(cacheKey);
-        if (cached != null)
-            return cached;
-
-        var worker = await _repository.GetByIdAsync(id, w => w.ProvidedServices);
-
-        if (worker == null)
-            return null;
-
-        var dto = _mapper.Map<WorkerDTO>(worker);
-
-        await _redis.SetAsync(cacheKey, dto, TimeSpan.FromMinutes(10));
-
-        return dto;
+        return await GetCachedAsync(
+            $"workers:{id}",
+            async () =>
+            {
+                var worker = await _uow.Workers.GetByIdAsync(id, w => w.ProvidedServices);
+                return worker == null ? null : _mapper.Map<WorkerDTO>(worker);
+            }
+        );
     }
 
     // =========================
@@ -95,20 +75,16 @@ public class WorkerService : IWorkersService
 
         foreach (var serviceId in dto.ServicesId)
         {
-            var service = await _serviceRepository.GetByIdAsync(serviceId);
+            var service = await _uow.Services.GetByIdAsync(serviceId);
             if (service != null)
                 worker.ProvidedServices.Add(service);
         }
 
-        await _repository.AddAsync(worker);
-        await _context.SaveChangesAsync();
+        await _uow.Workers.AddAsync(worker);
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("workers", _hub, "WorkersChanged");
 
-        await _redis.InvalidateByPrefixAsync("workers");
-        await _hubContext.Clients.All.SendAsync("WorkersChanged");
-
-        var resultDto = _mapper.Map<WorkerDTO>(worker);
-
-        return Result<WorkerDTO>.Ok(resultDto);
+        return Result<WorkerDTO>.Ok(_mapper.Map<WorkerDTO>(worker));
     }
 
     // =========================
@@ -116,7 +92,7 @@ public class WorkerService : IWorkersService
     // =========================
     public async Task<Result<WorkerDTO>> Update(int id, WorkerDTO dto)
     {
-        var worker = await _repository.GetByIdAsync(id, w => w.ProvidedServices);
+        var worker = await _uow.Workers.GetByIdAsync(id, w => w.ProvidedServices);
 
         if (worker == null)
             return Result<WorkerDTO>.Ok(null);
@@ -124,15 +100,11 @@ public class WorkerService : IWorkersService
         _mapper.Map(dto, worker);
         worker.LastUpdatedAt = DateTime.UtcNow;
 
-        _repository.Update(worker);
-        await _context.SaveChangesAsync();
+        _uow.Workers.Update(worker);
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("workers", _hub, "WorkersChanged");
 
-        await _redis.InvalidateByPrefixAsync("workers");
-        await _hubContext.Clients.All.SendAsync("WorkersChanged");
-
-        var resultDto = _mapper.Map<WorkerDTO>(worker);
-
-        return Result<WorkerDTO>.Ok(resultDto);
+        return Result<WorkerDTO>.Ok(_mapper.Map<WorkerDTO>(worker));
     }
 
     // =========================
@@ -140,16 +112,14 @@ public class WorkerService : IWorkersService
     // =========================
     public async Task<Result<WorkerDTO>> Delete(int id)
     {
-        var worker = await _repository.GetByIdAsync(id);
+        var worker = await _uow.Workers.GetByIdAsync(id);
 
         if (worker == null)
             return Result<WorkerDTO>.Ok(null);
 
-        _repository.Delete(worker);
-        await _context.SaveChangesAsync();
-
-        await _redis.InvalidateByPrefixAsync("workers");
-        await _hubContext.Clients.All.SendAsync("WorkersChanged");
+        _uow.Workers.Delete(worker);
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("workers", _hub, "WorkersChanged");
 
         return Result<WorkerDTO>.Ok(null);
     }
@@ -159,7 +129,7 @@ public class WorkerService : IWorkersService
     // =========================
     public async Task<List<ServiceDTO>?> GetServicesByWorker(int id)
     {
-        var worker = await _repository.GetByIdAsync(id, w => w.ProvidedServices);
+        var worker = await _uow.Workers.GetByIdAsync(id, w => w.ProvidedServices);
 
         if (worker == null)
             return null;
@@ -172,12 +142,12 @@ public class WorkerService : IWorkersService
     // =========================
     public async Task<List<WorkerDTO>> GetWorkersByService(int id)
     {
-        var workers = await _repository.GetAllAsync(
-            filter: w => w.ProvidedServices.Any(s => s.Id == id),
-            includes: w => w.ProvidedServices
+        var workers = await _uow.Workers.GetAllAsync(
+            w => w.ProvidedServices.Any(s => s.Id == id),
+            null,
+            w => w.ProvidedServices
         );
 
         return _mapper.Map<List<WorkerDTO>>(workers);
     }
-
 }

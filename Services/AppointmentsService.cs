@@ -11,25 +11,20 @@ using Microsoft.EntityFrameworkCore;
 
 namespace BarberShop.Services;
 
-public class AppointmentsService : IAppointmentsService
+public class AppointmentsService : BaseService, IAppointmentsService
 {
-    private readonly IAppointmentRepository _repository;
+    private readonly IUnitOfWork _uow;
     private readonly IMapper _mapper;
-    private readonly AppDbContext _context;
-    private readonly RedisService _redis;
     private readonly IHubContext<AppointmentsHub> _hub;
 
     public AppointmentsService(
-        IAppointmentRepository repository,
+        IUnitOfWork uow,
         IMapper mapper,
-        AppDbContext context,
         RedisService redis,
-        IHubContext<AppointmentsHub> hub)
+        IHubContext<AppointmentsHub> hub) : base(redis)
     {
-        _repository = repository;
+        _uow = uow;
         _mapper = mapper;
-        _context = context;
-        _redis = redis;
         _hub = hub;
     }
 
@@ -38,48 +33,37 @@ public class AppointmentsService : IAppointmentsService
     // =========================
     public async Task<List<AppointmentResponseDTO>> GetAllAsync()
     {
-        var cacheKey = "appointments:all";
-
-        var cached = await _redis.GetAsync<List<AppointmentResponseDTO>>(cacheKey);
-        if (cached != null)
-            return cached;
-
-        var data = await _repository.GetAllAsync(
-            null,
-            q => q.OrderByDescending(a => a.ScheduledFor),
-            a => a.Customer,
-            a => a.Worker,
-            a => a.Service
+        var result = await GetCachedAsync(
+            "appointments:all",
+            async () => _mapper.Map<List<AppointmentResponseDTO>>(
+                await _uow.Appointments.GetAllAsync(
+                    null,
+                    q => q.OrderByDescending(a => a.ScheduledFor),
+                    a => a.Customer,
+                    a => a.Worker,
+                    a => a.Service))
         );
 
-        var dto = _mapper.Map<List<AppointmentResponseDTO>>(data);
-
-        await _redis.SetAsync(cacheKey, dto, TimeSpan.FromMinutes(5));
-
-        return dto;
+        return result ?? [];
     }
 
+    // =========================
+    // GET BY ID
+    // =========================
     public async Task<AppointmentResponseDTO?> GetByIdAsync(int id)
     {
-        var cacheKey = $"appointments:{id}";
+        return await GetCachedAsync(
+            $"appointments:{id}",
+            async () =>
+            {
+                var entity = await _uow.Appointments.GetByIdAsync(id,
+                    a => a.Customer,
+                    a => a.Worker,
+                    a => a.Service);
 
-        var cached = await _redis.GetAsync<AppointmentResponseDTO>(cacheKey);
-        if (cached != null)
-            return cached;
-
-        var entity = await _repository.GetByIdAsync(id,
-            a => a.Customer,
-            a => a.Worker,
-            a => a.Service);
-
-        if (entity == null)
-            return null;
-
-        var dto = _mapper.Map<AppointmentResponseDTO>(entity);
-
-        await _redis.SetAsync(cacheKey, dto, TimeSpan.FromMinutes(5));
-
-        return dto;
+                return entity == null ? null : _mapper.Map<AppointmentResponseDTO>(entity);
+            }
+        );
     }
 
     // =========================
@@ -89,15 +73,11 @@ public class AppointmentsService : IAppointmentsService
     {
         var entity = _mapper.Map<Appointment>(dto);
 
-        await _repository.AddAsync(entity);
-        await _context.SaveChangesAsync();
+        await _uow.Appointments.AddAsync(entity);
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("appointments", _hub, "AppointmentsChanged");
 
-        await _redis.InvalidateByPrefixAsync("appointments");
-        await _hub.Clients.All.SendAsync("AppointmentsChanged");
-
-        var response = _mapper.Map<AppointmentResponseDTO>(entity);
-
-        return Result<AppointmentResponseDTO>.Ok(response);
+        return Result<AppointmentResponseDTO>.Ok(_mapper.Map<AppointmentResponseDTO>(entity));
     }
 
     // =========================
@@ -105,7 +85,7 @@ public class AppointmentsService : IAppointmentsService
     // =========================
     public async Task<Result<AppointmentResponseDTO>> Update(int id, AppointmentRequestDTO dto)
     {
-        var entity = await _repository.GetByIdAsync(id);
+        var entity = await _uow.Appointments.GetByIdAsync(id);
 
         if (entity == null)
             return Result<AppointmentResponseDTO>.Ok(null);
@@ -115,15 +95,11 @@ public class AppointmentsService : IAppointmentsService
         if (dto.Status == Status.Completed && entity.CompletedAt == null)
             entity.CompletedAt = DateTime.UtcNow;
 
-        _repository.Update(entity);
-        await _context.SaveChangesAsync();
+        _uow.Appointments.Update(entity);
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("appointments", _hub, "AppointmentsChanged");
 
-        await _redis.InvalidateByPrefixAsync("appointments");
-        await _hub.Clients.All.SendAsync("AppointmentsChanged");
-
-        var response = _mapper.Map<AppointmentResponseDTO>(entity);
-
-        return Result<AppointmentResponseDTO>.Ok(response);
+        return Result<AppointmentResponseDTO>.Ok(_mapper.Map<AppointmentResponseDTO>(entity));
     }
 
     // =========================
@@ -131,7 +107,7 @@ public class AppointmentsService : IAppointmentsService
     // =========================
     public async Task<Result<AppointmentResponseDTO>> Delete(int id)
     {
-        var entity = await _repository.GetByIdAsync(id);
+        var entity = await _uow.Appointments.GetByIdAsync(id);
 
         if (entity == null)
             return Result<AppointmentResponseDTO>.Ok(null);
@@ -145,11 +121,9 @@ public class AppointmentsService : IAppointmentsService
         if (entity.Status == Status.Deleted)
             return Result<AppointmentResponseDTO>.Fail("Already deleted");
 
-        await _repository.VirtualDelete(entity);
-        await _context.SaveChangesAsync();
-
-        await _redis.InvalidateByPrefixAsync("appointments");
-        await _hub.Clients.All.SendAsync("AppointmentsChanged");
+        await _uow.Appointments.VirtualDelete(entity);
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("appointments", _hub, "AppointmentsChanged");
 
         return Result<AppointmentResponseDTO>.Ok(null);
     }
@@ -159,60 +133,50 @@ public class AppointmentsService : IAppointmentsService
     // =========================
     public async Task<List<AppointmentResponseDTO>> GetByDateRange(DateTime start, DateTime end)
     {
-        var data = await _repository.GetAllAsync(
+        var data = await _uow.Appointments.GetAllAsync(
             a => a.ScheduledFor >= start && a.ScheduledFor <= end,
             q => q.OrderByDescending(a => a.ScheduledFor),
-            a => a.Customer,
-            a => a.Worker,
-            a => a.Service);
+            a => a.Customer, a => a.Worker, a => a.Service);
 
         return _mapper.Map<List<AppointmentResponseDTO>>(data);
     }
 
     public async Task<List<AppointmentResponseDTO>> GetByWorker(int workerId)
     {
-        var data = await _repository.GetAllAsync(
+        var data = await _uow.Appointments.GetAllAsync(
             a => a.WorkerId == workerId,
             q => q.OrderByDescending(a => a.ScheduledFor),
-            a => a.Customer,
-            a => a.Worker,
-            a => a.Service);
+            a => a.Customer, a => a.Worker, a => a.Service);
 
         return _mapper.Map<List<AppointmentResponseDTO>>(data);
     }
 
     public async Task<List<AppointmentResponseDTO>> GetByCustomer(int customerId)
     {
-        var data = await _repository.GetAllAsync(
+        var data = await _uow.Appointments.GetAllAsync(
             a => a.CustomerId == customerId,
             q => q.OrderByDescending(a => a.ScheduledFor),
-            a => a.Customer,
-            a => a.Worker,
-            a => a.Service);
+            a => a.Customer, a => a.Worker, a => a.Service);
 
         return _mapper.Map<List<AppointmentResponseDTO>>(data);
     }
 
     public async Task<List<AppointmentResponseDTO>> GetByService(int serviceId)
     {
-        var data = await _repository.GetAllAsync(
+        var data = await _uow.Appointments.GetAllAsync(
             a => a.ServiceId == serviceId,
             q => q.OrderByDescending(a => a.ScheduledFor),
-            a => a.Customer,
-            a => a.Worker,
-            a => a.Service);
+            a => a.Customer, a => a.Worker, a => a.Service);
 
         return _mapper.Map<List<AppointmentResponseDTO>>(data);
     }
 
     public async Task<List<AppointmentResponseDTO>> GetByStatus(Status status)
     {
-        var data = await _repository.GetAllAsync(
+        var data = await _uow.Appointments.GetAllAsync(
             a => a.Status == status,
             q => q.OrderByDescending(a => a.ScheduledFor),
-            a => a.Customer,
-            a => a.Worker,
-            a => a.Service);
+            a => a.Customer, a => a.Worker, a => a.Service);
 
         return _mapper.Map<List<AppointmentResponseDTO>>(data);
     }
