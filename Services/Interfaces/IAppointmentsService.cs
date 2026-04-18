@@ -17,4 +17,7 @@ public interface IAppointmentsService
     Task<List<AppointmentResponseDTO>> GetByCustomer(int customerId);
     Task<List<AppointmentResponseDTO>> GetByService(int serviceId);
     Task<List<AppointmentResponseDTO>> GetByStatus(Status status);
+
+    Task<List<AppointmentResponseDTO>> DelayAppointments(List<int> idList, TimeSpan time);
+    Task<List<AppointmentResponseDTO>> CancelAppointments(List<int> idList);
 }

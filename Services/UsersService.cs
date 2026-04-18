@@ -9,26 +9,21 @@ using Microsoft.AspNetCore.SignalR;
 
 namespace BarberShop.Services;
 
-public class UsersService : IUsersService
+public class UsersService : BaseService, IUsersService
 {
-    private readonly IUserRepository _repository;
+    private readonly IUnitOfWork _uow;
     private readonly IMapper _mapper;
-    private readonly AppDbContext _context;
-    private readonly RedisService _redis;
-    private readonly IHubContext<UsersHub> _hubContext;
+    private readonly IHubContext<UsersHub> _hub;
 
     public UsersService(
-        IUserRepository repository,
+        IUnitOfWork uow,
         IMapper mapper,
-        AppDbContext context,
         RedisService redis,
-        IHubContext<UsersHub> hubContext)
+        IHubContext<UsersHub> hub) : base(redis)
     {
-        _repository = repository;
+        _uow = uow;
         _mapper = mapper;
-        _context = context;
-        _redis = redis;
-        _hubContext = hubContext;
+        _hub = hub;
     }
 
     // =========================
@@ -36,19 +31,12 @@ public class UsersService : IUsersService
     // =========================
     public async Task<List<UserResponseDTO>> GetAllAsync()
     {
-        var cacheKey = "users:all";
+        var result = await GetCachedAsync(
+            "users:all",
+            async () => _mapper.Map<List<UserResponseDTO>>(await _uow.Users.GetAllAsync())
+        );
 
-        var cached = await _redis.GetAsync<List<UserResponseDTO>>(cacheKey);
-        if (cached != null)
-            return cached;
-
-        var users = await _repository.GetAllAsync();
-
-        var dtoList = _mapper.Map<List<UserResponseDTO>>(users);
-
-        await _redis.SetAsync(cacheKey, dtoList, TimeSpan.FromMinutes(10));
-
-        return dtoList;
+        return result ?? [];
     }
 
     // =========================
@@ -56,22 +44,14 @@ public class UsersService : IUsersService
     // =========================
     public async Task<UserResponseDTO?> GetByIdAsync(int id)
     {
-        var cacheKey = $"users:{id}";
-
-        var cached = await _redis.GetAsync<UserResponseDTO>(cacheKey);
-        if (cached != null)
-            return cached;
-
-        var user = await _repository.GetByIdAsync(id);
-
-        if (user == null)
-            return null;
-
-        var dto = _mapper.Map<UserResponseDTO>(user);
-
-        await _redis.SetAsync(cacheKey, dto, TimeSpan.FromMinutes(10));
-
-        return dto;
+        return await GetCachedAsync(
+            $"users:{id}",
+            async () =>
+            {
+                var user = await _uow.Users.GetByIdAsync(id);
+                return user == null ? null : _mapper.Map<UserResponseDTO>(user);
+            }
+        );
     }
 
     // =========================
@@ -79,22 +59,18 @@ public class UsersService : IUsersService
     // =========================
     public async Task<Result<UserResponseDTO>> Create(UserRequestDTO dto)
     {
-        var exists = await _repository.GetAllAsync(u => u.Email == dto.Email);
+        var exists = await _uow.Users.GetAllAsync(u => u.Email == dto.Email);
 
         if (exists.Any())
             return Result<UserResponseDTO>.Fail("Email already exists");
 
         var user = _mapper.Map<User>(dto);
 
-        await _repository.AddAsync(user);
-        await _context.SaveChangesAsync();
+        await _uow.Users.AddAsync(user);
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("users", _hub, "UsersChanged");
 
-        await _redis.InvalidateByPrefixAsync("users");
-        await _hubContext.Clients.All.SendAsync("UsersChanged");
-
-        var resultDto = _mapper.Map<UserResponseDTO>(user);
-
-        return Result<UserResponseDTO>.Ok(resultDto);
+        return Result<UserResponseDTO>.Ok(_mapper.Map<UserResponseDTO>(user));
     }
 
     // =========================
@@ -102,22 +78,18 @@ public class UsersService : IUsersService
     // =========================
     public async Task<Result<UserResponseDTO>> Update(int id, UserRequestDTO dto)
     {
-        var user = await _repository.GetByIdAsync(id);
+        var user = await _uow.Users.GetByIdAsync(id);
 
         if (user == null)
             return Result<UserResponseDTO>.Ok(null);
 
         _mapper.Map(dto, user);
 
-        _repository.Update(user);
-        await _context.SaveChangesAsync();
+        _uow.Users.Update(user);
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("users", _hub, "UsersChanged");
 
-        await _redis.InvalidateByPrefixAsync("users");
-        await _hubContext.Clients.All.SendAsync("UsersChanged");
-
-        var resultDto = _mapper.Map<UserResponseDTO>(user);
-
-        return Result<UserResponseDTO>.Ok(resultDto);
+        return Result<UserResponseDTO>.Ok(_mapper.Map<UserResponseDTO>(user));
     }
 
     // =========================
@@ -125,16 +97,14 @@ public class UsersService : IUsersService
     // =========================
     public async Task<Result<UserResponseDTO>> Delete(int id)
     {
-        var user = await _repository.GetByIdAsync(id);
+        var user = await _uow.Users.GetByIdAsync(id);
 
         if (user == null)
             return Result<UserResponseDTO>.Ok(null);
 
-        _repository.Delete(user);
-        await _context.SaveChangesAsync();
-
-        await _redis.InvalidateByPrefixAsync("users");
-        await _hubContext.Clients.All.SendAsync("UsersChanged");
+        _uow.Users.Delete(user);
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("users", _hub, "UsersChanged");
 
         return Result<UserResponseDTO>.Ok(null);
     }

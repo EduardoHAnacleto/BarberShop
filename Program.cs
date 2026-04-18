@@ -1,5 +1,6 @@
 using AutoMapper;
 using BarberShop.Data;
+using BarberShop.Extensions;
 using BarberShop.Hubs;
 using BarberShop.Models;
 using BarberShop.Repositories;
@@ -37,6 +38,7 @@ builder.Services.AddScoped<IAppointmentsService, AppointmentsService>();
 builder.Services.AddScoped<ICustomersService, CustomersService>();
 builder.Services.AddScoped<IUsersService, UsersService>();
 builder.Services.AddScoped<IWorkersService, WorkersService>();
+builder.Services.AddScoped<IWorkingHoursService, WorkingHoursService>();
 builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 
 
@@ -53,7 +55,12 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
     options.AbortOnConnectFail = false;
     return ConnectionMultiplexer.Connect(options);
 });
+var redisConnection = ConnectionMultiplexer.Connect(
+    builder.Configuration.GetConnectionString("Redis")!);
+builder.Services.AddSingleton<IConnectionMultiplexer>(redisConnection);
 builder.Services.AddSingleton<RedisService>();
+
+builder.Services.AddObservability(builder.Configuration, redisConnection);
 
 // CORS
 builder.Services.AddCors(options =>
@@ -101,12 +108,6 @@ else
     );
 }
 
-// Business Hours Schedule settings
-builder.Services.Configure<BusinessHoursSettings>(
-    builder.Configuration.GetSection("BusinessHours")
-);
-
-
 builder.Services.AddMemoryCache();
 
 var app = builder.Build();
@@ -116,6 +117,7 @@ app.UseForwardedHeaders(new ForwardedHeadersOptions
     ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
 });
 app.UseRouting();
+app.MapPrometheusScrapingEndpoint();
 app.UseCors("FrontendPolicy");
 app.UseStaticFiles();
 

@@ -8,11 +8,13 @@ using BarberShop.Repositories.Interfaces;
 using BarberShop.Services.Interfaces;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using System.Timers;
 
 namespace BarberShop.Services;
 
 public class AppointmentsService : BaseService, IAppointmentsService
 {
+
     private readonly IUnitOfWork _uow;
     private readonly IMapper _mapper;
     private readonly IHubContext<AppointmentsHub> _hub;
@@ -110,7 +112,7 @@ public class AppointmentsService : BaseService, IAppointmentsService
         var entity = await _uow.Appointments.GetByIdAsync(id);
 
         if (entity == null)
-            return Result<AppointmentResponseDTO>.Ok(null);
+            return Result<AppointmentResponseDTO>.Fail("Appointment not found");
 
         if (entity.Status == Status.Cancelled)
             return Result<AppointmentResponseDTO>.Fail("Already cancelled");
@@ -179,5 +181,49 @@ public class AppointmentsService : BaseService, IAppointmentsService
             a => a.Customer, a => a.Worker, a => a.Service);
 
         return _mapper.Map<List<AppointmentResponseDTO>>(data);
+    }
+
+    // =========================
+
+    public async Task<List<AppointmentResponseDTO>> DelayAppointments(List<int> idList, TimeSpan time)
+    {
+        var tasks = idList.Select(async id =>
+        {
+            var entity = await _uow.Appointments.GetByIdAsync(id);
+
+            if (entity != null)
+            {
+                entity.ScheduledFor = entity.ScheduledFor.Add(time);
+                entity.LastUpdatedAt = DateTime.UtcNow;
+                _uow.Appointments.Update(entity);
+                return _mapper.Map<AppointmentResponseDTO>(entity);
+            }
+
+            return null;
+        });
+
+        var results = await Task.WhenAll(tasks);
+
+        return results.Where(x => x != null).ToList();
+    }
+
+    public async Task<List<AppointmentResponseDTO>> CancelAppointments(List<int> idList)
+    {
+        var tasks = idList.Select(async id =>
+        {
+            var entity = await _uow.Appointments.GetByIdAsync(id);
+
+            if (entity != null)
+            {
+                await _uow.Appointments.VirtualDelete(entity);
+                return _mapper.Map<AppointmentResponseDTO>(entity);
+            }
+
+            return null;
+        });
+
+        var results = await Task.WhenAll(tasks);
+
+        return results.Where(x => x != null).ToList();
     }
 }

@@ -20,6 +20,7 @@ namespace BarberShop.Services
             CreateMap<UserRequestDTO, User>()
                 .ForMember(dest => dest.PasswordHash, opt => opt.MapFrom(src => BCrypt.Net.BCrypt.HashPassword(src.PasswordHash)));
             CreateMap<UserRequestDTO, UserResponseDTO>();
+            CreateMap<BusinessSchedule, BusinessScheduleDTO>().ReverseMap();
         }
     }
 }

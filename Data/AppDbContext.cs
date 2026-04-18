@@ -13,9 +13,25 @@ public class AppDbContext : DbContext
     public DbSet<Service> Services { get; set; }
     public DbSet<Worker> Workers { get; set; }
     public DbSet<User> Users { get; set; }
+    public DbSet<BusinessSchedule> BusinessSchedules { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<BusinessSchedule>(entity =>
+        {
+            entity.ToTable("BusinessSchedules");
+
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.DayOfWeek).HasColumnName("DayOfWeek");
+            entity.Property(e => e.IsOpen).HasColumnName("IsOpen");
+            entity.Property(e => e.OpenTime).HasColumnName("OpenTime");
+            entity.Property(e => e.CloseTime).HasColumnName("CloseTime");
+            entity.Property(e => e.BreakStart).HasColumnName("BreakStart");
+            entity.Property(e => e.BreakEnd).HasColumnName("BreakEnd");
+
+            entity.HasIndex(e => e.DayOfWeek).IsUnique();
+        });
+
         modelBuilder.Entity<Service>(entity =>
         {
             entity.ToTable("Services");

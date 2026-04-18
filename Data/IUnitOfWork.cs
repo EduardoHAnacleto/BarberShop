@@ -10,6 +10,7 @@ public interface IUnitOfWork : IDisposable
     IWorkerRepository Workers { get; }
     IUserRepository Users { get; }
     IWorkingHoursRepository WorkingHours { get; }
+    IBusinessScheduleRepository BusinessSchedules { get; }
 
     Task<int> SaveAsync();
     Task BeginTransactionAsync();
