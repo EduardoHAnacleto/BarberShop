@@ -1,3 +1,11 @@
 <Solution>
-  <Project Path="BarberShop.csproj" />
+  <Folder Name="/src/">
+    <Project Path="BarberShop.API/BarberShop.API.csproj" Id="1c446f02-4fef-4c73-a167-b97c732938d2" />
+    <Project Path="BarberShop.Application/BarberShop.Application.csproj" Id="9a2aa2ae-861b-4234-864a-cbfe7e14736c" />
+    <Project Path="BarberShop.Domain/BarberShop.Domain.csproj" Id="2648c533-1725-45c7-89c9-4e651e71bbad" />
+    <Project Path="BarberShop.Infrastructure/BarberShop.Infrastructure.csproj" Id="25106aeb-4f7a-48ef-b549-f8028c05d4e8" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="BarberShop.Tests/BarberShop.Tests.csproj" />
+  </Folder>
 </Solution>
