@@ -54,7 +54,7 @@ public class ServicesServiceTests
         // Redis mockado com cache sempre vazio
         var redis = BuildRedis();
 
-        _sut = new ServicesService(_uow.Object, _mapper, redis, _hub.Object);
+        _sut = new ServicesService(_uow.Object, _mapper, redis, _hub.Object, NullLogger<ServicesService>.Instance);
     }
 
     private static RedisService BuildRedis()

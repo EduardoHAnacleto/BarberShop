@@ -52,7 +52,7 @@ public class UsersServiceTests
             cfg.AddProfile<MappingProfile>();
         }, NullLoggerFactory.Instance).CreateMapper();
 
-        _sut = new UsersService(_uow.Object, _mapper, BuildRedis(), _hub.Object);
+        _sut = new UsersService(_uow.Object, _mapper, BuildRedis(), _hub.Object, NullLogger<UsersService>.Instance);
     }
 
     private static RedisService BuildRedis()

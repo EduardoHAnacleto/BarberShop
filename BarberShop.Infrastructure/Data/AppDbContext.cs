@@ -45,7 +45,7 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<Customer>(entity =>
         {
-            entity.ToTable("Custumers");
+            entity.ToTable("Customers");
 
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Id).HasColumnName("CustomerId");

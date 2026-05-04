@@ -4,73 +4,193 @@ using BarberShop.Application.DTOs;
 using BarberShop.Application.Interfaces;
 using BarberShop.Domain.Enums;
 using BarberShop.Domain.Models;
+using Microsoft.Extensions.Logging;
+using System.Diagnostics;
 
 namespace BarberShop.Application.Services;
 
 public class WorkingHoursService : IWorkingHoursService
 {
+    // =========================
+    // OBSERVABILITY
+    // =========================
+    private static readonly ActivitySource _activitySource =
+        new("BarberShop.WorkingHoursService");
+
+    // =========================
+    // DEPENDENCIES
+    // =========================
     private readonly IUnitOfWork _uow;
     private readonly IMapper _mapper;
+    private readonly ILogger<WorkingHoursService> _logger;
 
-    public WorkingHoursService(IUnitOfWork uow, IMapper mapper)
+    public WorkingHoursService(
+        IUnitOfWork uow,
+        IMapper mapper,
+        ILogger<WorkingHoursService> logger)
     {
         _uow = uow;
         _mapper = mapper;
+        _logger = logger;
     }
 
     // =========================
-    // SCHEDULE (horário padrão)
+    // SCHEDULE
     // =========================
     public async Task<List<BusinessScheduleDTO>> GetScheduleAsync()
     {
+        using var span = _activitySource.StartActivity("GetSchedule");
+
+        _logger.LogInformation("Fetching full business schedule");
+
         var schedules = await _uow.BusinessSchedules.GetAllOrderedAsync();
+
+        span?.SetTag("schedule.count", schedules.Count);
+
         return _mapper.Map<List<BusinessScheduleDTO>>(schedules);
     }
 
     public async Task<BusinessScheduleDTO?> GetScheduleByDayAsync(DayOfWeek day)
     {
-        var schedule = await _uow.BusinessSchedules.GetByDayAsync(day);
-        return schedule == null ? null : _mapper.Map<BusinessScheduleDTO>(schedule);
-    }
+        using var span = _activitySource.StartActivity("GetScheduleByDay");
+        span?.SetTag("schedule.day", day.ToString());
 
-    public async Task<Result<BusinessScheduleDTO>> UpdateScheduleAsync(int id, BusinessScheduleDTO dto)
-    {
-        var schedule = await _uow.BusinessSchedules.GetByIdAsync(id);
+        _logger.LogInformation("Fetching schedule for {DayOfWeek}", day);
+
+        var schedule = await _uow.BusinessSchedules.GetByDayAsync(day);
 
         if (schedule == null)
-            return Result<BusinessScheduleDTO>.Fail("Schedule not found");
+        {
+            _logger.LogWarning("No schedule found for {DayOfWeek}", day);
+            return null;
+        }
 
-        _mapper.Map(dto, schedule);
+        return _mapper.Map<BusinessScheduleDTO>(schedule);
+    }
 
-        _uow.BusinessSchedules.Update(schedule);
-        await _uow.SaveAsync();
+    public async Task<Result<BusinessScheduleDTO>> UpdateScheduleAsync(
+        int id, BusinessScheduleDTO dto)
+    {
+        using var span = _activitySource.StartActivity("UpdateSchedule");
+        span?.SetTag("schedule.id", id);
+        span?.SetTag("schedule.day", dto.DayOfWeek.ToString());
+        span?.SetTag("schedule.isOpen", dto.IsOpen);
 
-        return Result<BusinessScheduleDTO>.Ok(_mapper.Map<BusinessScheduleDTO>(schedule));
+        _logger.LogInformation(
+            "Updating schedule {ScheduleId} for {DayOfWeek} — IsOpen: {IsOpen}",
+            id, dto.DayOfWeek, dto.IsOpen);
+
+        try
+        {
+            var schedule = await _uow.BusinessSchedules.GetByIdAsync(id);
+
+            if (schedule == null)
+            {
+                _logger.LogWarning("Schedule {ScheduleId} not found", id);
+                return Result<BusinessScheduleDTO>.Fail("Schedule not found");
+            }
+
+            _mapper.Map(dto, schedule);
+
+            _uow.BusinessSchedules.Update(schedule);
+            await _uow.SaveAsync();
+
+            _logger.LogInformation("Schedule {ScheduleId} updated successfully", id);
+
+            return Result<BusinessScheduleDTO>.Ok(_mapper.Map<BusinessScheduleDTO>(schedule));
+        }
+        catch (Exception ex)
+        {
+            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            span?.AddException(ex);
+
+            _logger.LogError(ex, "Failed to update schedule {ScheduleId}", id);
+
+            throw;
+        }
     }
 
     // =========================
-    // CLOSURES (fechamentos excepcionais)
+    // CLOSURES
     // =========================
     public async Task<List<WorkingHours>> GetClosuresAsync()
-        => await _uow.WorkingHours.GetAllAsync();
+    {
+        using var span = _activitySource.StartActivity("GetClosures");
+
+        _logger.LogInformation("Fetching all closures");
+
+        var closures = await _uow.WorkingHours.GetAllAsync();
+
+        span?.SetTag("closures.count", closures.Count);
+
+        return closures;
+    }
 
     public async Task<Result<WorkingHours>> AddClosureAsync(WorkingHours closure)
     {
-        await _uow.WorkingHours.AddAsync(closure);
-        await _uow.SaveAsync();
-        return Result<WorkingHours>.Ok(closure);
+        using var span = _activitySource.StartActivity("AddClosure");
+        span?.SetTag("closure.reason", closure.Reason);
+        span?.SetTag("closure.type", closure.ClosureType.ToString());
+        span?.SetTag("closure.from", closure.ClosedFrom.ToString("o"));
+
+        _logger.LogInformation(
+            "Adding closure from {ClosedFrom} — reason: {Reason}",
+            closure.ClosedFrom, closure.Reason);
+
+        try
+        {
+            await _uow.WorkingHours.AddAsync(closure);
+            await _uow.SaveAsync();
+
+            _logger.LogInformation(
+                "Closure {ClosureId} added successfully", closure.Id);
+
+            return Result<WorkingHours>.Ok(closure);
+        }
+        catch (Exception ex)
+        {
+            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            span?.AddException(ex);
+
+            _logger.LogError(ex, "Failed to add closure");
+
+            throw;
+        }
     }
 
     public async Task<Result<bool>> RemoveClosureAsync(int id)
     {
-        var closure = await _uow.WorkingHours.GetByIdAsync(id);
+        using var span = _activitySource.StartActivity("RemoveClosure");
+        span?.SetTag("closure.id", id);
 
-        if (closure == null)
-            return Result<bool>.Ok(false);
+        _logger.LogInformation("Removing closure {ClosureId}", id);
 
-        _uow.WorkingHours.Delete(closure);
-        await _uow.SaveAsync();
-        return Result<bool>.Ok(true);
+        try
+        {
+            var closure = await _uow.WorkingHours.GetByIdAsync(id);
+
+            if (closure == null)
+            {
+                _logger.LogWarning("Closure {ClosureId} not found", id);
+                return Result<bool>.Ok(false);
+            }
+
+            _uow.WorkingHours.Delete(closure);
+            await _uow.SaveAsync();
+
+            _logger.LogInformation("Closure {ClosureId} removed successfully", id);
+
+            return Result<bool>.Ok(true);
+        }
+        catch (Exception ex)
+        {
+            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            span?.AddException(ex);
+
+            _logger.LogError(ex, "Failed to remove closure {ClosureId}", id);
+
+            throw;
+        }
     }
 
     // =========================
@@ -78,17 +198,40 @@ public class WorkingHoursService : IWorkingHoursService
     // =========================
     public async Task<bool> IsOpenAsync(DateTime dateTime)
     {
+        using var span = _activitySource.StartActivity("IsOpen");
+        span?.SetTag("datetime", dateTime.ToString("o"));
+
+        _logger.LogInformation("Checking if business is open at {DateTime}", dateTime);
+
         var schedule = await _uow.BusinessSchedules.GetByDayAsync(dateTime.DayOfWeek);
 
         if (schedule == null || !schedule.IsOpen)
+        {
+            _logger.LogInformation(
+                "Business is closed at {DateTime} — no schedule or day marked closed",
+                dateTime);
+            span?.SetTag("is_open", false);
             return false;
+        }
 
         if (!IsWithinSchedule(dateTime.TimeOfDay, schedule))
+        {
+            _logger.LogInformation(
+                "Business is closed at {DateTime} — outside business hours", dateTime);
+            span?.SetTag("is_open", false);
             return false;
+        }
 
         if (await IsInClosurePeriod(dateTime))
+        {
+            _logger.LogInformation(
+                "Business is closed at {DateTime} — exceptional closure active", dateTime);
+            span?.SetTag("is_open", false);
             return false;
+        }
 
+        _logger.LogInformation("Business is open at {DateTime}", dateTime);
+        span?.SetTag("is_open", true);
         return true;
     }
 

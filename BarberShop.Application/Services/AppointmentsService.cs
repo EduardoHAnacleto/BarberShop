@@ -5,24 +5,62 @@ using BarberShop.Application.DTOs;
 using BarberShop.Application.Interfaces;
 using BarberShop.Domain.Models;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Logging;
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
 namespace BarberShop.Application.Services;
 
 public class AppointmentsService : BaseService, IAppointmentsService
 {
+    // =========================
+    // OBSERVABILITY
+    // =========================
+    private static readonly ActivitySource _activitySource =
+        new("BarberShop.AppointmentsService");
 
+    private static readonly Meter _meter =
+        new("BarberShop.AppointmentsService");
+
+    private static readonly Counter<long> _appointmentsCreated =
+        _meter.CreateCounter<long>(
+            "barbershop.appointments.created",
+            description: "Total number of appointments created");
+
+    private static readonly Counter<long> _appointmentsCancelled =
+        _meter.CreateCounter<long>(
+            "barbershop.appointments.cancelled",
+            description: "Total number of appointments cancelled");
+
+    private static readonly Counter<long> _appointmentsDelayed =
+        _meter.CreateCounter<long>(
+            "barbershop.appointments.delayed",
+            description: "Total number of appointments delayed");
+
+    private static readonly Histogram<double> _operationDuration =
+        _meter.CreateHistogram<double>(
+            "barbershop.appointments.operation_duration",
+            unit: "ms",
+            description: "Duration of appointment operations");
+
+    // =========================
+    // DEPENDENCIES
+    // =========================
     private readonly IUnitOfWork _uow;
     private readonly IMapper _mapper;
     private readonly IHubContext<AppointmentsHub> _hub;
+    private readonly ILogger<AppointmentsService> _logger;
 
     public AppointmentsService(
         IUnitOfWork uow,
         IMapper mapper,
         IRedisService redis,
-        IHubContext<AppointmentsHub> hub) : base(redis)
+        IHubContext<AppointmentsHub> hub,
+        ILogger<AppointmentsService> logger) : base(redis)
     {
         _uow = uow;
         _mapper = mapper;
         _hub = hub;
+        _logger = logger;
     }
 
     // =========================
@@ -30,6 +68,10 @@ public class AppointmentsService : BaseService, IAppointmentsService
     // =========================
     public async Task<List<AppointmentResponseDTO>> GetAllAsync()
     {
+        using var span = _activitySource.StartActivity("GetAllAppointments");
+
+        _logger.LogInformation("Fetching all appointments");
+
         var result = await GetCachedAsync(
             "appointments:all",
             async () => _mapper.Map<List<AppointmentResponseDTO>>(
@@ -41,6 +83,10 @@ public class AppointmentsService : BaseService, IAppointmentsService
                     a => a.Service))
         );
 
+        var count = result?.Count ?? 0;
+        span?.SetTag("appointments.count", count);
+        _logger.LogInformation("Fetched {Count} appointments", count);
+
         return result ?? [];
     }
 
@@ -49,7 +95,12 @@ public class AppointmentsService : BaseService, IAppointmentsService
     // =========================
     public async Task<AppointmentResponseDTO?> GetByIdAsync(int id)
     {
-        return await GetCachedAsync(
+        using var span = _activitySource.StartActivity("GetAppointmentById");
+        span?.SetTag("appointment.id", id);
+
+        _logger.LogInformation("Fetching appointment {AppointmentId}", id);
+
+        var result = await GetCachedAsync(
             $"appointments:{id}",
             async () =>
             {
@@ -61,6 +112,11 @@ public class AppointmentsService : BaseService, IAppointmentsService
                 return entity == null ? null : _mapper.Map<AppointmentResponseDTO>(entity);
             }
         );
+
+        if (result == null)
+            _logger.LogWarning("Appointment {AppointmentId} not found", id);
+
+        return result;
     }
 
     // =========================
@@ -68,13 +124,57 @@ public class AppointmentsService : BaseService, IAppointmentsService
     // =========================
     public async Task<Result<AppointmentResponseDTO>> Create(AppointmentRequestDTO dto)
     {
-        var entity = _mapper.Map<Appointment>(dto);
+        using var span = _activitySource.StartActivity("CreateAppointment");
+        span?.SetTag("appointment.workerId", dto.WorkerId);
+        span?.SetTag("appointment.customerId", dto.CustomerId);
+        span?.SetTag("appointment.serviceId", dto.ServiceId);
+        span?.SetTag("appointment.scheduledFor", dto.ScheduledFor.ToString("o"));
 
-        await _uow.Appointments.AddAsync(entity);
-        await _uow.SaveAsync();
-        await InvalidateAndNotifyAsync("appointments", _hub, "AppointmentsChanged");
+        var stopwatch = Stopwatch.StartNew();
 
-        return Result<AppointmentResponseDTO>.Ok(_mapper.Map<AppointmentResponseDTO>(entity));
+        _logger.LogInformation(
+            "Creating appointment for CustomerId {CustomerId} with WorkerId {WorkerId} on {ScheduledFor}",
+            dto.CustomerId, dto.WorkerId, dto.ScheduledFor);
+
+        try
+        {
+            var entity = _mapper.Map<Appointment>(dto);
+
+            await _uow.Appointments.AddAsync(entity);
+            await _uow.SaveAsync();
+            await InvalidateAndNotifyAsync("appointments", _hub, "AppointmentsChanged");
+
+            stopwatch.Stop();
+
+            span?.SetTag("appointment.id", entity.Id);
+            _appointmentsCreated.Add(1,
+                new TagList
+                {
+                    { "worker.id",  dto.WorkerId  },
+                    { "service.id", dto.ServiceId }
+                });
+            _operationDuration.Record(
+                stopwatch.Elapsed.TotalMilliseconds,
+                new TagList { { "operation", "create" } });
+
+            _logger.LogInformation(
+                "Appointment {AppointmentId} created in {ElapsedMs}ms",
+                entity.Id, stopwatch.Elapsed.TotalMilliseconds);
+
+            return Result<AppointmentResponseDTO>.Ok(_mapper.Map<AppointmentResponseDTO>(entity));
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            span?.AddException(ex);
+
+            _logger.LogError(ex,
+                "Failed to create appointment for CustomerId {CustomerId}",
+                dto.CustomerId);
+
+            throw;
+        }
     }
 
     // =========================
@@ -82,21 +182,58 @@ public class AppointmentsService : BaseService, IAppointmentsService
     // =========================
     public async Task<Result<AppointmentResponseDTO>> Update(int id, AppointmentRequestDTO dto)
     {
-        var entity = await _uow.Appointments.GetByIdAsync(id);
+        using var span = _activitySource.StartActivity("UpdateAppointment");
+        span?.SetTag("appointment.id", id);
+        span?.SetTag("appointment.newStatus", dto.Status.ToString());
 
-        if (entity == null)
-            return Result<AppointmentResponseDTO>.Ok(null);
+        var stopwatch = Stopwatch.StartNew();
 
-        _mapper.Map(dto, entity);
+        _logger.LogInformation(
+            "Updating appointment {AppointmentId} to status {Status}",
+            id, dto.Status);
 
-        if (dto.Status == Status.Completed && entity.CompletedAt == null)
-            entity.CompletedAt = DateTime.UtcNow;
+        try
+        {
+            var entity = await _uow.Appointments.GetByIdAsync(id);
 
-        _uow.Appointments.Update(entity);
-        await _uow.SaveAsync();
-        await InvalidateAndNotifyAsync("appointments", _hub, "AppointmentsChanged");
+            if (entity == null)
+            {
+                _logger.LogWarning("Appointment {AppointmentId} not found for update", id);
+                return Result<AppointmentResponseDTO>.Ok(null);
+            }
 
-        return Result<AppointmentResponseDTO>.Ok(_mapper.Map<AppointmentResponseDTO>(entity));
+            var previousStatus = entity.Status;
+            _mapper.Map(dto, entity);
+
+            if (dto.Status == Status.Completed && entity.CompletedAt == null)
+                entity.CompletedAt = DateTime.UtcNow;
+
+            _uow.Appointments.Update(entity);
+            await _uow.SaveAsync();
+            await InvalidateAndNotifyAsync("appointments", _hub, "AppointmentsChanged");
+
+            stopwatch.Stop();
+
+            _operationDuration.Record(
+                stopwatch.Elapsed.TotalMilliseconds,
+                new TagList { { "operation", "update" } });
+
+            _logger.LogInformation(
+                "Appointment {AppointmentId} updated from {PreviousStatus} to {NewStatus} in {ElapsedMs}ms",
+                id, previousStatus, dto.Status, stopwatch.Elapsed.TotalMilliseconds);
+
+            return Result<AppointmentResponseDTO>.Ok(_mapper.Map<AppointmentResponseDTO>(entity));
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            span?.AddException(ex);
+
+            _logger.LogError(ex, "Failed to update appointment {AppointmentId}", id);
+
+            throw;
+        }
     }
 
     // =========================
@@ -104,25 +241,63 @@ public class AppointmentsService : BaseService, IAppointmentsService
     // =========================
     public async Task<Result<AppointmentResponseDTO>> Delete(int id)
     {
-        var entity = await _uow.Appointments.GetByIdAsync(id);
+        using var span = _activitySource.StartActivity("DeleteAppointment");
+        span?.SetTag("appointment.id", id);
 
-        if (entity == null)
-            return Result<AppointmentResponseDTO>.Fail("Appointment not found");
+        _logger.LogInformation("Cancelling appointment {AppointmentId}", id);
 
-        if (entity.Status == Status.Cancelled)
-            return Result<AppointmentResponseDTO>.Fail("Already cancelled");
+        try
+        {
+            var entity = await _uow.Appointments.GetByIdAsync(id);
 
-        if (entity.Status == Status.Completed)
-            return Result<AppointmentResponseDTO>.Fail("Completed cannot be cancelled");
+            if (entity == null)
+            {
+                _logger.LogWarning("Appointment {AppointmentId} not found", id);
+                return Result<AppointmentResponseDTO>.Fail("Appointment not found");
+            }
 
-        if (entity.Status == Status.Deleted)
-            return Result<AppointmentResponseDTO>.Fail("Already deleted");
+            if (entity.Status == Status.Cancelled)
+            {
+                _logger.LogWarning("Appointment {AppointmentId} already cancelled", id);
+                return Result<AppointmentResponseDTO>.Fail("Already cancelled");
+            }
 
-        await _uow.Appointments.VirtualDelete(entity);
-        await _uow.SaveAsync();
-        await InvalidateAndNotifyAsync("appointments", _hub, "AppointmentsChanged");
+            if (entity.Status == Status.Completed)
+            {
+                _logger.LogWarning("Appointment {AppointmentId} is completed, cannot cancel", id);
+                return Result<AppointmentResponseDTO>.Fail("Completed cannot be cancelled");
+            }
 
-        return Result<AppointmentResponseDTO>.Ok(null);
+            if (entity.Status == Status.Deleted)
+            {
+                _logger.LogWarning("Appointment {AppointmentId} already deleted", id);
+                return Result<AppointmentResponseDTO>.Fail("Already deleted");
+            }
+
+            await _uow.Appointments.VirtualDelete(entity);
+            await _uow.SaveAsync();
+            await InvalidateAndNotifyAsync("appointments", _hub, "AppointmentsChanged");
+
+            _appointmentsCancelled.Add(1,
+                new TagList
+                {
+                    { "worker.id",  entity.WorkerId  },
+                    { "service.id", entity.ServiceId }
+                });
+
+            _logger.LogInformation("Appointment {AppointmentId} cancelled successfully", id);
+
+            return Result<AppointmentResponseDTO>.Ok(null);
+        }
+        catch (Exception ex)
+        {
+            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            span?.AddException(ex);
+
+            _logger.LogError(ex, "Failed to cancel appointment {AppointmentId}", id);
+
+            throw;
+        }
     }
 
     // =========================
@@ -130,113 +305,212 @@ public class AppointmentsService : BaseService, IAppointmentsService
     // =========================
     public async Task<List<AppointmentResponseDTO>> GetByDateRange(DateTime start, DateTime end)
     {
+        using var span = _activitySource.StartActivity("GetAppointmentsByDateRange");
+        span?.SetTag("filter.start", start.ToString("o"));
+        span?.SetTag("filter.end", end.ToString("o"));
+
+        _logger.LogInformation(
+            "Fetching appointments between {Start} and {End}", start, end);
+
         var data = await _uow.Appointments.GetAllAsync(
             a => a.ScheduledFor >= start && a.ScheduledFor <= end,
             q => q.OrderByDescending(a => a.ScheduledFor),
             a => a.Customer, a => a.Worker, a => a.Service);
+
+        span?.SetTag("appointments.count", data.Count);
 
         return _mapper.Map<List<AppointmentResponseDTO>>(data);
     }
 
     public async Task<List<AppointmentResponseDTO>> GetByWorker(int workerId)
     {
+        using var span = _activitySource.StartActivity("GetAppointmentsByWorker");
+        span?.SetTag("filter.workerId", workerId);
+
+        _logger.LogInformation("Fetching appointments for WorkerId {WorkerId}", workerId);
+
         var data = await _uow.Appointments.GetAllAsync(
             a => a.WorkerId == workerId,
             q => q.OrderByDescending(a => a.ScheduledFor),
             a => a.Customer, a => a.Worker, a => a.Service);
+
+        span?.SetTag("appointments.count", data.Count);
 
         return _mapper.Map<List<AppointmentResponseDTO>>(data);
     }
 
     public async Task<List<AppointmentResponseDTO>> GetByCustomer(int customerId)
     {
+        using var span = _activitySource.StartActivity("GetAppointmentsByCustomer");
+        span?.SetTag("filter.customerId", customerId);
+
+        _logger.LogInformation("Fetching appointments for CustomerId {CustomerId}", customerId);
+
         var data = await _uow.Appointments.GetAllAsync(
             a => a.CustomerId == customerId,
             q => q.OrderByDescending(a => a.ScheduledFor),
             a => a.Customer, a => a.Worker, a => a.Service);
+
+        span?.SetTag("appointments.count", data.Count);
 
         return _mapper.Map<List<AppointmentResponseDTO>>(data);
     }
 
     public async Task<List<AppointmentResponseDTO>> GetByService(int serviceId)
     {
+        using var span = _activitySource.StartActivity("GetAppointmentsByService");
+        span?.SetTag("filter.serviceId", serviceId);
+
+        _logger.LogInformation("Fetching appointments for ServiceId {ServiceId}", serviceId);
+
         var data = await _uow.Appointments.GetAllAsync(
             a => a.ServiceId == serviceId,
             q => q.OrderByDescending(a => a.ScheduledFor),
             a => a.Customer, a => a.Worker, a => a.Service);
+
+        span?.SetTag("appointments.count", data.Count);
 
         return _mapper.Map<List<AppointmentResponseDTO>>(data);
     }
 
     public async Task<List<AppointmentResponseDTO>> GetByStatus(Status status)
     {
+        using var span = _activitySource.StartActivity("GetAppointmentsByStatus");
+        span?.SetTag("filter.status", status.ToString());
+
+        _logger.LogInformation("Fetching appointments with status {Status}", status);
+
         var data = await _uow.Appointments.GetAllAsync(
             a => a.Status == status,
             q => q.OrderByDescending(a => a.ScheduledFor),
             a => a.Customer, a => a.Worker, a => a.Service);
 
+        span?.SetTag("appointments.count", data.Count);
+
         return _mapper.Map<List<AppointmentResponseDTO>>(data);
     }
 
     // =========================
-
+    // DELAY APPOINTMENTS
+    // =========================
     public async Task<Result<List<AppointmentResponseDTO>>> DelayAppointments(
         List<int> idList, TimeSpan time)
     {
+        using var span = _activitySource.StartActivity("DelayAppointments");
+        span?.SetTag("appointments.count", idList?.Count ?? 0);
+        span?.SetTag("delay.minutes", time.TotalMinutes);
+
+        _logger.LogInformation(
+            "Delaying {Count} appointments by {Minutes} minutes",
+            idList?.Count ?? 0, time.TotalMinutes);
+
         if (idList == null || idList.Count == 0)
             return Result<List<AppointmentResponseDTO>>.Fail("No appointments provided");
 
         if (time <= TimeSpan.Zero)
             return Result<List<AppointmentResponseDTO>>.Fail("Delay time must be greater than zero");
 
-        var tasks = idList.Select(async id =>
+        try
         {
-            var entity = await _uow.Appointments.GetByIdAsync(id);
+            var tasks = idList.Select(async id =>
+            {
+                var entity = await _uow.Appointments.GetByIdAsync(id);
 
-            if (entity == null)
-                return null;
+                if (entity == null)
+                {
+                    _logger.LogWarning("Appointment {AppointmentId} not found for delay", id);
+                    return null;
+                }
 
-            entity.ScheduledFor = entity.ScheduledFor.Add(time);
-            entity.LastUpdatedAt = DateTime.UtcNow;
-            _uow.Appointments.Update(entity);
+                entity.ScheduledFor = entity.ScheduledFor.Add(time);
+                entity.LastUpdatedAt = DateTime.UtcNow;
+                _uow.Appointments.Update(entity);
 
-            return _mapper.Map<AppointmentResponseDTO>(entity);
-        });
+                return _mapper.Map<AppointmentResponseDTO>(entity);
+            });
 
-        var results = (await Task.WhenAll(tasks))
-            .Where(x => x != null)
-            .ToList();
+            var results = (await Task.WhenAll(tasks))
+                .Where(x => x != null)
+                .ToList();
 
-        await _uow.SaveAsync();
-        await InvalidateAndNotifyAsync("appointments", _hub, "AppointmentsChanged");
+            await _uow.SaveAsync();
+            await InvalidateAndNotifyAsync("appointments", _hub, "AppointmentsChanged");
 
-        return Result<List<AppointmentResponseDTO>>.Ok(results!);
+            _appointmentsDelayed.Add(results.Count,
+                new TagList { { "delay.minutes", time.TotalMinutes } });
+
+            _logger.LogInformation(
+                "{Delayed} of {Total} appointments delayed by {Minutes} minutes",
+                results.Count, idList.Count, time.TotalMinutes);
+
+            return Result<List<AppointmentResponseDTO>>.Ok(results!);
+        }
+        catch (Exception ex)
+        {
+            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            span?.AddException(ex);
+
+            _logger.LogError(ex, "Failed to delay appointments");
+
+            throw;
+        }
     }
 
+    // =========================
+    // CANCEL APPOINTMENTS (BATCH)
+    // =========================
     public async Task<Result<List<AppointmentResponseDTO>>> CancelAppointments(List<int> idList)
     {
+        using var span = _activitySource.StartActivity("CancelAppointments");
+        span?.SetTag("appointments.count", idList?.Count ?? 0);
+
+        _logger.LogInformation("Batch cancelling {Count} appointments", idList?.Count ?? 0);
+
         if (idList == null || idList.Count == 0)
             return Result<List<AppointmentResponseDTO>>.Fail("No appointments provided");
 
-        var tasks = idList.Select(async id =>
+        try
         {
-            var entity = await _uow.Appointments.GetByIdAsync(id);
+            var tasks = idList.Select(async id =>
+            {
+                var entity = await _uow.Appointments.GetByIdAsync(id);
 
-            if (entity == null)
-                return null;
+                if (entity == null)
+                {
+                    _logger.LogWarning(
+                        "Appointment {AppointmentId} not found for batch cancel", id);
+                    return null;
+                }
 
-            await _uow.Appointments.VirtualDelete(entity);
+                await _uow.Appointments.VirtualDelete(entity);
 
-            return _mapper.Map<AppointmentResponseDTO>(entity);
-        });
+                return _mapper.Map<AppointmentResponseDTO>(entity);
+            });
 
-        var results = (await Task.WhenAll(tasks))
-            .Where(x => x != null)
-            .ToList();
+            var results = (await Task.WhenAll(tasks))
+                .Where(x => x != null)
+                .ToList();
 
-        await _uow.SaveAsync();
-        await InvalidateAndNotifyAsync("appointments", _hub, "AppointmentsChanged");
+            await _uow.SaveAsync();
+            await InvalidateAndNotifyAsync("appointments", _hub, "AppointmentsChanged");
 
-        return Result<List<AppointmentResponseDTO>>.Ok(results!);
+            _appointmentsCancelled.Add(results.Count,
+                new TagList { { "source", "batch" } });
+
+            _logger.LogInformation(
+                "{Cancelled} of {Total} appointments cancelled",
+                results.Count, idList.Count);
+
+            return Result<List<AppointmentResponseDTO>>.Ok(results!);
+        }
+        catch (Exception ex)
+        {
+            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            span?.AddException(ex);
+
+            _logger.LogError(ex, "Failed to batch cancel appointments");
+
+            throw;
+        }
     }
 }

@@ -5,6 +5,7 @@ using BarberShop.Application.Services;
 using BarberShop.Infrastructure.Data;
 using BarberShop.Infrastructure.Services;
 using BarberShop.Infrastructure.UnitOfWork;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using StackExchange.Redis;
@@ -13,77 +14,73 @@ using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddOpenApi();
-
+// =========================
 // Controllers
+// =========================
+builder.Services.AddOpenApi();
 builder.Services.AddControllers()
-      .AddJsonOptions(o =>
-    o.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase);
+    .AddJsonOptions(o =>
+        o.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase);
 builder.Services.AddDirectoryBrowser();
 
-//AutoMapper DTO - Model
+// =========================
+// AutoMapper
+// =========================
 builder.Services.AddAutoMapper(cfg =>
 {
     cfg.AddProfile<MappingProfile>();
 });
 
+// =========================
 // SignalR
+// =========================
 builder.Services.AddSignalR(options =>
 {
     options.EnableDetailedErrors = true;
 });
 
-// DI
-builder.Services.AddScoped<IAppointmentsService, AppointmentsService>();
-builder.Services.AddScoped<ICustomersService, CustomersService>();
-builder.Services.AddScoped<IUsersService, UsersService>();
-builder.Services.AddScoped<IWorkersService, WorkersService>();
-builder.Services.AddScoped<IWorkingHoursService, WorkingHoursService>();
-builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
-
-
+// =========================
 // Swagger
+// =========================
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+// =========================
 // Redis
-builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
-{
-    var options = ConfigurationOptions.Parse(
-        builder.Configuration.GetConnectionString("Redis")!
-    );
-    options.AbortOnConnectFail = false;
-    return ConnectionMultiplexer.Connect(options);
-});
-var redisConnection = ConnectionMultiplexer.Connect(
-    builder.Configuration.GetConnectionString("Redis")!);
-builder.Services.AddSingleton<IConnectionMultiplexer>(redisConnection);
-builder.Services.AddSingleton<RedisService>();
+// =========================
+var redisConnectionString = builder.Configuration.GetConnectionString("Redis")!;
 
+var redisOptions = ConfigurationOptions.Parse(redisConnectionString);
+redisOptions.AbortOnConnectFail = false;
+
+var redisConnection = ConnectionMultiplexer.Connect(redisOptions);
+
+builder.Services.AddSingleton<IConnectionMultiplexer>(redisConnection);
+builder.Services.AddSingleton<IRedisService, RedisService>();
+
+// =========================
+// Observabilidade
+// =========================
 builder.Services.AddObservability(builder.Configuration, redisConnection);
 
+// =========================
 // CORS
+// =========================
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("FrontendPolicy", policy =>
     {
         policy
-            //.WithOrigins(
-            //    "",
-            //    ""
-           // )
             .AllowAnyHeader()
             .AllowAnyOrigin()
             .AllowAnyMethod();
     });
 });
 
+// =========================
 // Database
-var connectionString =
-    builder.Configuration.GetConnectionString("DefaultConnection");
-
-//Environment Set To Development
-builder.Environment.IsDevelopment();
+// =========================
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 
 if (builder.Environment.IsDevelopment())
 {
@@ -93,44 +90,108 @@ if (builder.Environment.IsDevelopment())
 else
 {
     builder.Services.AddDbContext<AppDbContext>(options =>
-        options.UseSqlServer(
-            connectionString,
-            sqlOptions =>
-            {
-                sqlOptions.EnableRetryOnFailure(
-                    maxRetryCount: 10,
-                    maxRetryDelay: TimeSpan.FromSeconds(30),
-                    errorNumbersToAdd: null
-                );
-                sqlOptions.CommandTimeout(60);
-            }
-        ).UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking)
-    );
+        options.UseSqlServer(connectionString, sqlOptions =>
+        {
+            sqlOptions.EnableRetryOnFailure(
+                maxRetryCount: 10,
+                maxRetryDelay: TimeSpan.FromSeconds(30),
+                errorNumbersToAdd: null);
+            sqlOptions.CommandTimeout(60);
+        })
+        .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking));
+}
+
+// =========================
+// DI — Serviços
+// =========================
+builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
+builder.Services.AddScoped<IAppointmentsService, AppointmentsService>();
+builder.Services.AddScoped<ICustomersService, CustomersService>();
+builder.Services.AddScoped<IUsersService, UsersService>();
+builder.Services.AddScoped<IWorkersService, WorkersService>();
+builder.Services.AddScoped<IWorkingHoursService, WorkingHoursService>();
+builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddSingleton<TokenService>();
+
+// =========================
+// Health Checks
+// =========================
+var healthChecks = builder.Services.AddHealthChecks()
+    .AddRedis(
+        redisConnectionString,
+        name: "redis",
+        tags: ["cache", "infrastructure"]);
+
+if (!builder.Environment.IsDevelopment())
+{
+    healthChecks.AddSqlServer(
+        connectionString!,
+        name: "sqlserver",
+        tags: ["database", "infrastructure"]);
 }
 
 builder.Services.AddMemoryCache();
 
+// =========================
+// Pipeline HTTP
+// =========================
 var app = builder.Build();
 
 app.UseForwardedHeaders(new ForwardedHeadersOptions
 {
     ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
 });
+
 app.UseRouting();
 app.MapPrometheusScrapingEndpoint();
 app.UseCors("FrontendPolicy");
 app.UseStaticFiles();
 
-// Configure the HTTP request pipeline.
+app.UseSwagger();
+app.UseSwaggerUI();
+
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
-    app.UseSwagger();
-    app.UseSwaggerUI();
 }
 
 app.UseHttpsRedirection();
 
+// =========================
+// Health Check Endpoints
+// =========================
+
+app.MapHealthChecks("/health");
+
+// Endpoint
+app.MapHealthChecks("/health/detail", new HealthCheckOptions
+{
+    ResponseWriter = async (context, report) =>
+    {
+        context.Response.ContentType = "application/json";
+
+        var result = new
+        {
+            status = report.Status.ToString(),
+            duration = report.TotalDuration.TotalMilliseconds + "ms",
+            checks = report.Entries.Select(e => new
+            {
+                name = e.Key,
+                status = e.Value.Status.ToString(),
+                duration = e.Value.Duration.TotalMilliseconds + "ms",
+                tags = e.Value.Tags,
+                description = e.Value.Description,
+                error = e.Value.Exception?.Message
+            })
+        };
+
+        await context.Response.WriteAsJsonAsync(result);
+    }
+});
+
+// =========================
+// Controllers e Hubs
+// =========================
 try
 {
     app.MapControllers();
@@ -138,23 +199,14 @@ try
 catch (ReflectionTypeLoadException ex)
 {
     foreach (var e in ex.LoaderExceptions)
-    {
         Console.WriteLine(e?.Message);
-    }
     throw;
 }
 
-app.MapHub<WorkersHub>("/workersHub")
-    .RequireCors("FrontendPolicy");
-app.MapHub<ServicesHub>("/servicesHub")
-    .RequireCors("FrontendPolicy");
-app.MapHub<CustomersHub>("/customersHub")
-    .RequireCors("FrontendPolicy");
-app.MapHub<AppointmentsHub>("/appointmentsHub")
-    .RequireCors("FrontendPolicy");
-app.MapHub<UsersHub>("/usersHub")
-    .RequireCors("FrontendPolicy");
+app.MapHub<WorkersHub>("/workersHub").RequireCors("FrontendPolicy");
+app.MapHub<ServicesHub>("/servicesHub").RequireCors("FrontendPolicy");
+app.MapHub<CustomersHub>("/customersHub").RequireCors("FrontendPolicy");
+app.MapHub<AppointmentsHub>("/appointmentsHub").RequireCors("FrontendPolicy");
+app.MapHub<UsersHub>("/usersHub").RequireCors("FrontendPolicy");
 
 app.Run();
-
-

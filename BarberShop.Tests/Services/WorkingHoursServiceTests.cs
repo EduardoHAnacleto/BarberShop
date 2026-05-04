@@ -36,7 +36,7 @@ public class WorkingHoursServiceTests
             cfg.AddProfile<MappingProfile>();
         }, NullLoggerFactory.Instance).CreateMapper();
 
-        _sut = new WorkingHoursService(_uow.Object, _mapper);
+        _sut = new WorkingHoursService(_uow.Object, _mapper, NullLogger<WorkingHoursService>.Instance);
     }
 
     // =========================

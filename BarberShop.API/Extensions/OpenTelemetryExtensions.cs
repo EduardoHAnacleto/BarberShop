@@ -41,6 +41,15 @@ public static class OpenTelemetryExtensions
                 {
                     options.SetVerboseDatabaseStatements = true;
                 })
+
+                .AddSource("BarberShop.AppointmentsService")
+                .AddSource("BarberShop.WorkersService")
+                .AddSource("BarberShop.CustomersService")
+                .AddSource("BarberShop.ServicesService")
+                .AddSource("BarberShop.UsersService")
+                .AddSource("BarberShop.WorkingHoursService")
+                .AddSource("BarberShop.AuthService")
+
                 .AddOtlpExporter(options =>
                 {
                     options.Endpoint = new Uri(otlpEndpoint);
@@ -54,6 +63,15 @@ public static class OpenTelemetryExtensions
                 .AddAspNetCoreInstrumentation()
                 .AddRuntimeInstrumentation()
                 .AddHttpClientInstrumentation()
+
+
+                .AddMeter("BarberShop.AppointmentsService")
+                .AddMeter("BarberShop.WorkersService")
+                .AddMeter("BarberShop.UsersService")
+                .AddMeter("BarberShop.ServicesService")
+                .AddMeter("BarberShop.CustomersService")
+                .AddMeter("BarberShop.AuthService")
+
                 .AddPrometheusExporter()
                 .AddOtlpExporter(options =>
                 {

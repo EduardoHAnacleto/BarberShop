@@ -49,7 +49,7 @@ public class AppointmentsServiceTests
             cfg.AddProfile<MappingProfile>();
         }, NullLoggerFactory.Instance).CreateMapper();
 
-        _sut = new AppointmentsService(_uow.Object, _mapper, BuildRedis(), _hub.Object);
+        _sut = new AppointmentsService(_uow.Object, _mapper, BuildRedis(), _hub.Object, NullLogger<AppointmentsService>.Instance);
     }
 
     private static RedisService BuildRedis()
