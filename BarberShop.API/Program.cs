@@ -203,6 +203,7 @@ catch (ReflectionTypeLoadException ex)
     throw;
 }
 
+//Hubs
 app.MapHub<WorkersHub>("/workersHub").RequireCors("FrontendPolicy");
 app.MapHub<ServicesHub>("/servicesHub").RequireCors("FrontendPolicy");
 app.MapHub<CustomersHub>("/customersHub").RequireCors("FrontendPolicy");
