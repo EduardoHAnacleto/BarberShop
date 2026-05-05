@@ -1,5 +1,6 @@
 using BarberShop.API.Extensions;
 using BarberShop.API.Hubs;
+using BarberShop.API.Middleware;
 using BarberShop.Application.Interfaces;
 using BarberShop.Application.Services;
 using BarberShop.Infrastructure.Data;
@@ -132,6 +133,10 @@ if (!builder.Environment.IsDevelopment())
 
 builder.Services.AddMemoryCache();
 
+// Global Exception Handler
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddProblemDetails();
+
 // =========================
 // Pipeline HTTP
 // =========================
@@ -143,6 +148,7 @@ app.UseForwardedHeaders(new ForwardedHeadersOptions
 });
 
 app.UseRouting();
+app.UseExceptionHandler();
 app.MapPrometheusScrapingEndpoint();
 app.UseCors("FrontendPolicy");
 app.UseStaticFiles();
