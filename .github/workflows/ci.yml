@@ -29,19 +29,19 @@ jobs:
       # Dependency
       # =========================
       - name: Restore
-        run: dotnet restore
+        run: dotnet restore BarberShop.sln
 
       # =========================
       # Build
       # =========================
       - name: Build
-        run: dotnet build --no-restore --configuration Release
+        run: dotnet build BarberShop.sln --no-restore --configuration Release
 
       # =========================
       # Tests with coverage
       # =========================
       - name: Test
-        run: dotnet test --no-build --configuration Release --verbosity normal --collect:"XPlat Code Coverage" --results-directory ./coverage
+        run: dotnet test BarberShop.sln --no-build --configuration Release --verbosity normal --collect:"XPlat Code Coverage" --results-directory ./coverage
 
       # =========================
       # Publish test coverage
