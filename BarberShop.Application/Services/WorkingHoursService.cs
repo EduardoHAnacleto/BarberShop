@@ -80,34 +80,22 @@ public class WorkingHoursService : IWorkingHoursService
             "Updating schedule {ScheduleId} for {DayOfWeek} — IsOpen: {IsOpen}",
             id, dto.DayOfWeek, dto.IsOpen);
 
-        try
+        var schedule = await _uow.BusinessSchedules.GetByIdAsync(id);
+
+        if (schedule == null)
         {
-            var schedule = await _uow.BusinessSchedules.GetByIdAsync(id);
-
-            if (schedule == null)
-            {
-                _logger.LogWarning("Schedule {ScheduleId} not found", id);
-                return Result<BusinessScheduleDTO>.Fail("Schedule not found");
-            }
-
-            _mapper.Map(dto, schedule);
-
-            _uow.BusinessSchedules.Update(schedule);
-            await _uow.SaveAsync();
-
-            _logger.LogInformation("Schedule {ScheduleId} updated successfully", id);
-
-            return Result<BusinessScheduleDTO>.Ok(_mapper.Map<BusinessScheduleDTO>(schedule));
+            _logger.LogWarning("Schedule {ScheduleId} not found", id);
+            return Result<BusinessScheduleDTO>.Fail("Schedule not found");
         }
-        catch (Exception ex)
-        {
-            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            span?.AddException(ex);
 
-            _logger.LogError(ex, "Failed to update schedule {ScheduleId}", id);
+        _mapper.Map(dto, schedule);
 
-            throw;
-        }
+        _uow.BusinessSchedules.Update(schedule);
+        await _uow.SaveAsync();
+
+        _logger.LogInformation("Schedule {ScheduleId} updated successfully", id);
+
+        return Result<BusinessScheduleDTO>.Ok(_mapper.Map<BusinessScheduleDTO>(schedule));
     }
 
     // =========================
@@ -137,25 +125,12 @@ public class WorkingHoursService : IWorkingHoursService
             "Adding closure from {ClosedFrom} — reason: {Reason}",
             closure.ClosedFrom, closure.Reason);
 
-        try
-        {
-            await _uow.WorkingHours.AddAsync(closure);
-            await _uow.SaveAsync();
+        await _uow.WorkingHours.AddAsync(closure);
+        await _uow.SaveAsync();
 
-            _logger.LogInformation(
-                "Closure {ClosureId} added successfully", closure.Id);
+        _logger.LogInformation("Closure {ClosureId} added successfully", closure.Id);
 
-            return Result<WorkingHours>.Ok(closure);
-        }
-        catch (Exception ex)
-        {
-            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            span?.AddException(ex);
-
-            _logger.LogError(ex, "Failed to add closure");
-
-            throw;
-        }
+        return Result<WorkingHours>.Ok(closure);
     }
 
     public async Task<Result<bool>> RemoveClosureAsync(int id)
@@ -165,32 +140,20 @@ public class WorkingHoursService : IWorkingHoursService
 
         _logger.LogInformation("Removing closure {ClosureId}", id);
 
-        try
+        var closure = await _uow.WorkingHours.GetByIdAsync(id);
+
+        if (closure == null)
         {
-            var closure = await _uow.WorkingHours.GetByIdAsync(id);
-
-            if (closure == null)
-            {
-                _logger.LogWarning("Closure {ClosureId} not found", id);
-                return Result<bool>.Ok(false);
-            }
-
-            _uow.WorkingHours.Delete(closure);
-            await _uow.SaveAsync();
-
-            _logger.LogInformation("Closure {ClosureId} removed successfully", id);
-
-            return Result<bool>.Ok(true);
+            _logger.LogWarning("Closure {ClosureId} not found", id);
+            return Result<bool>.Ok(false);
         }
-        catch (Exception ex)
-        {
-            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            span?.AddException(ex);
 
-            _logger.LogError(ex, "Failed to remove closure {ClosureId}", id);
+        _uow.WorkingHours.Delete(closure);
+        await _uow.SaveAsync();
 
-            throw;
-        }
+        _logger.LogInformation("Closure {ClosureId} removed successfully", id);
+
+        return Result<bool>.Ok(true);
     }
 
     // =========================

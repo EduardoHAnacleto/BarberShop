@@ -16,17 +16,14 @@ public class GlobalExceptionHandler : IExceptionHandler
 
     public async ValueTask<bool> TryHandleAsync(HttpContext context, Exception exception, CancellationToken cancellationToken)
     {
-        // TraceId do OpenTelemetry — permite encontrar o trace no Grafana/Tempo
         var traceId = Activity.Current?.Id ?? context.TraceIdentifier;
 
-        // Loga o erro com o TraceId para correlação no Grafana
         _logger.LogError(exception,
             "Unhandled exception. TraceId: {TraceId} | Path: {Path} | Method: {Method}",
             traceId,
             context.Request.Path,
             context.Request.Method);
 
-        // Mapeia o tipo de exceção para o status HTTP correto
         var statusCode = exception switch
         {
             ArgumentException => HttpStatusCode.BadRequest,
@@ -49,14 +46,11 @@ public class GlobalExceptionHandler : IExceptionHandler
 
         await context.Response.WriteAsJsonAsync(response, cancellationToken);
 
-        // Retorna true para indicar que a exceção foi tratada
         return true;
     }
 
     private static string GetUserFriendlyMessage(Exception exception, HttpStatusCode statusCode)
     {
-        // Em produção nunca expõe detalhes internos
-        // Apenas para exceções de negócio (BadRequest, NotFound) mostra a mensagem
         return statusCode switch
         {
             HttpStatusCode.BadRequest => exception.Message,

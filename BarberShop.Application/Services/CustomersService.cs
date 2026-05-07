@@ -126,39 +126,25 @@ public class CustomersService : BaseService, ICustomersService
             return Result<CustomerDTO>.Fail("Invalid Name");
         }
 
-        try
-        {
-            var customer = _mapper.Map<Customer>(dto);
+        var customer = _mapper.Map<Customer>(dto);
 
-            await _uow.Customers.AddAsync(customer);
-            await _uow.SaveAsync();
-            await InvalidateAndNotifyAsync("customers", _hub, "CustomersChanged");
+        await _uow.Customers.AddAsync(customer);
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("customers", _hub, "CustomersChanged");
 
-            stopwatch.Stop();
+        stopwatch.Stop();
 
-            span?.SetTag("customer.id", customer.Id);
-            _customersCreated.Add(1);
-            _operationDuration.Record(
-                stopwatch.Elapsed.TotalMilliseconds,
-                new TagList { { "operation", "create" } });
+        span?.SetTag("customer.id", customer.Id);
+        _customersCreated.Add(1);
+        _operationDuration.Record(
+            stopwatch.Elapsed.TotalMilliseconds,
+            new TagList { { "operation", "create" } });
 
-            _logger.LogInformation(
-                "Customer {CustomerId} ({CustomerName}) created in {ElapsedMs}ms",
-                customer.Id, customer.Name, stopwatch.Elapsed.TotalMilliseconds);
+        _logger.LogInformation(
+            "Customer {CustomerId} ({CustomerName}) created in {ElapsedMs}ms",
+            customer.Id, customer.Name, stopwatch.Elapsed.TotalMilliseconds);
 
-            return Result<CustomerDTO>.Ok(_mapper.Map<CustomerDTO>(customer));
-        }
-        catch (Exception ex)
-        {
-            stopwatch.Stop();
-            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            span?.AddException(ex);
-
-            _logger.LogError(ex,
-                "Failed to create customer {CustomerName}", dto.Name);
-
-            throw;
-        }
+        return Result<CustomerDTO>.Ok(_mapper.Map<CustomerDTO>(customer));
     }
 
     // =========================
@@ -173,45 +159,32 @@ public class CustomersService : BaseService, ICustomersService
 
         _logger.LogInformation("Updating customer {CustomerId}", id);
 
-        try
+        var customer = await _uow.Customers.GetByIdAsync(id);
+
+        if (customer == null)
         {
-            var customer = await _uow.Customers.GetByIdAsync(id);
-
-            if (customer == null)
-            {
-                _logger.LogWarning("Customer {CustomerId} not found for update", id);
-                return Result<CustomerDTO>.Ok(null);
-            }
-
-            _mapper.Map(dto, customer);
-            customer.LastUpdatedAt = DateTime.UtcNow;
-
-            _uow.Customers.Update(customer);
-            await _uow.SaveAsync();
-            await InvalidateAndNotifyAsync("customers", _hub, "CustomersChanged");
-
-            stopwatch.Stop();
-
-            _operationDuration.Record(
-                stopwatch.Elapsed.TotalMilliseconds,
-                new TagList { { "operation", "update" } });
-
-            _logger.LogInformation(
-                "Customer {CustomerId} updated in {ElapsedMs}ms",
-                id, stopwatch.Elapsed.TotalMilliseconds);
-
-            return Result<CustomerDTO>.Ok(_mapper.Map<CustomerDTO>(customer));
+            _logger.LogWarning("Customer {CustomerId} not found for update", id);
+            return Result<CustomerDTO>.Ok(null);
         }
-        catch (Exception ex)
-        {
-            stopwatch.Stop();
-            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            span?.AddException(ex);
 
-            _logger.LogError(ex, "Failed to update customer {CustomerId}", id);
+        _mapper.Map(dto, customer);
+        customer.LastUpdatedAt = DateTime.UtcNow;
 
-            throw;
-        }
+        _uow.Customers.Update(customer);
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("customers", _hub, "CustomersChanged");
+
+        stopwatch.Stop();
+
+        _operationDuration.Record(
+            stopwatch.Elapsed.TotalMilliseconds,
+            new TagList { { "operation", "update" } });
+
+        _logger.LogInformation(
+            "Customer {CustomerId} updated in {ElapsedMs}ms",
+            id, stopwatch.Elapsed.TotalMilliseconds);
+
+        return Result<CustomerDTO>.Ok(_mapper.Map<CustomerDTO>(customer));
     }
 
     // =========================
@@ -224,34 +197,22 @@ public class CustomersService : BaseService, ICustomersService
 
         _logger.LogInformation("Deleting customer {CustomerId}", id);
 
-        try
+        var customer = await _uow.Customers.GetByIdAsync(id);
+
+        if (customer == null)
         {
-            var customer = await _uow.Customers.GetByIdAsync(id);
-
-            if (customer == null)
-            {
-                _logger.LogWarning("Customer {CustomerId} not found for deletion", id);
-                return Result<CustomerDTO>.Ok(null);
-            }
-
-            _uow.Customers.Delete(customer);
-            await _uow.SaveAsync();
-            await InvalidateAndNotifyAsync("customers", _hub, "CustomersChanged");
-
-            _customersDeleted.Add(1);
-
-            _logger.LogInformation("Customer {CustomerId} deleted successfully", id);
-
+            _logger.LogWarning("Customer {CustomerId} not found for deletion", id);
             return Result<CustomerDTO>.Ok(null);
         }
-        catch (Exception ex)
-        {
-            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            span?.AddException(ex);
 
-            _logger.LogError(ex, "Failed to delete customer {CustomerId}", id);
+        _uow.Customers.Delete(customer);
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("customers", _hub, "CustomersChanged");
 
-            throw;
-        }
+        _customersDeleted.Add(1);
+
+        _logger.LogInformation("Customer {CustomerId} deleted successfully", id);
+
+        return Result<CustomerDTO>.Ok(null);
     }
 }

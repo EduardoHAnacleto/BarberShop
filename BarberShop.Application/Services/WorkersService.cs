@@ -138,53 +138,39 @@ public class WorkersService : BaseService, IWorkersService
             return Result<WorkerDTO>.Fail("Invalid Wage");
         }
 
-        try
+        var worker = _mapper.Map<Worker>(dto);
+
+        foreach (var serviceId in dto.ServicesId)
         {
-            var worker = _mapper.Map<Worker>(dto);
+            var service = await _uow.Services.GetByIdAsync(serviceId);
 
-            foreach (var serviceId in dto.ServicesId)
-            {
-                var service = await _uow.Services.GetByIdAsync(serviceId);
-
-                if (service != null)
-                    worker.ProvidedServices.Add(service);
-                else
-                    _logger.LogWarning(
-                        "ServiceId {ServiceId} not found — skipping", serviceId);
-            }
-
-            await _uow.Workers.AddAsync(worker);
-            await _uow.SaveAsync();
-            await InvalidateAndNotifyAsync("workers", _hub, "WorkersChanged");
-
-            stopwatch.Stop();
-
-            span?.SetTag("worker.id", worker.Id);
-            span?.SetTag("worker.services.count", worker.ProvidedServices.Count);
-            _workersCreated.Add(1);
-            _operationDuration.Record(
-                stopwatch.Elapsed.TotalMilliseconds,
-                new TagList { { "operation", "create" } });
-
-            _logger.LogInformation(
-                "Worker {WorkerId} ({WorkerName}) created with {ServicesCount} services in {ElapsedMs}ms",
-                worker.Id, worker.Name,
-                worker.ProvidedServices.Count,
-                stopwatch.Elapsed.TotalMilliseconds);
-
-            return Result<WorkerDTO>.Ok(_mapper.Map<WorkerDTO>(worker));
+            if (service != null)
+                worker.ProvidedServices.Add(service);
+            else
+                _logger.LogWarning(
+                    "ServiceId {ServiceId} not found — skipping", serviceId);
         }
-        catch (Exception ex)
-        {
-            stopwatch.Stop();
-            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            span?.AddException(ex);
 
-            _logger.LogError(ex,
-                "Failed to create worker {WorkerName}", dto.Name);
+        await _uow.Workers.AddAsync(worker);
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("workers", _hub, "WorkersChanged");
 
-            throw;
-        }
+        stopwatch.Stop();
+
+        span?.SetTag("worker.id", worker.Id);
+        span?.SetTag("worker.services.count", worker.ProvidedServices.Count);
+        _workersCreated.Add(1);
+        _operationDuration.Record(
+            stopwatch.Elapsed.TotalMilliseconds,
+            new TagList { { "operation", "create" } });
+
+        _logger.LogInformation(
+            "Worker {WorkerId} ({WorkerName}) created with {ServicesCount} services in {ElapsedMs}ms",
+            worker.Id, worker.Name,
+            worker.ProvidedServices.Count,
+            stopwatch.Elapsed.TotalMilliseconds);
+
+        return Result<WorkerDTO>.Ok(_mapper.Map<WorkerDTO>(worker));
     }
 
     // =========================
@@ -199,45 +185,32 @@ public class WorkersService : BaseService, IWorkersService
 
         _logger.LogInformation("Updating worker {WorkerId}", id);
 
-        try
+        var worker = await _uow.Workers.GetByIdAsync(id, w => w.ProvidedServices);
+
+        if (worker == null)
         {
-            var worker = await _uow.Workers.GetByIdAsync(id, w => w.ProvidedServices);
-
-            if (worker == null)
-            {
-                _logger.LogWarning("Worker {WorkerId} not found for update", id);
-                return Result<WorkerDTO>.Ok(null);
-            }
-
-            _mapper.Map(dto, worker);
-            worker.LastUpdatedAt = DateTime.UtcNow;
-
-            _uow.Workers.Update(worker);
-            await _uow.SaveAsync();
-            await InvalidateAndNotifyAsync("workers", _hub, "WorkersChanged");
-
-            stopwatch.Stop();
-
-            _operationDuration.Record(
-                stopwatch.Elapsed.TotalMilliseconds,
-                new TagList { { "operation", "update" } });
-
-            _logger.LogInformation(
-                "Worker {WorkerId} updated in {ElapsedMs}ms",
-                id, stopwatch.Elapsed.TotalMilliseconds);
-
-            return Result<WorkerDTO>.Ok(_mapper.Map<WorkerDTO>(worker));
+            _logger.LogWarning("Worker {WorkerId} not found for update", id);
+            return Result<WorkerDTO>.Ok(null);
         }
-        catch (Exception ex)
-        {
-            stopwatch.Stop();
-            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            span?.AddException(ex);
 
-            _logger.LogError(ex, "Failed to update worker {WorkerId}", id);
+        _mapper.Map(dto, worker);
+        worker.LastUpdatedAt = DateTime.UtcNow;
 
-            throw;
-        }
+        _uow.Workers.Update(worker);
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("workers", _hub, "WorkersChanged");
+
+        stopwatch.Stop();
+
+        _operationDuration.Record(
+            stopwatch.Elapsed.TotalMilliseconds,
+            new TagList { { "operation", "update" } });
+
+        _logger.LogInformation(
+            "Worker {WorkerId} updated in {ElapsedMs}ms",
+            id, stopwatch.Elapsed.TotalMilliseconds);
+
+        return Result<WorkerDTO>.Ok(_mapper.Map<WorkerDTO>(worker));
     }
 
     // =========================
@@ -250,35 +223,23 @@ public class WorkersService : BaseService, IWorkersService
 
         _logger.LogInformation("Deleting worker {WorkerId}", id);
 
-        try
+        var worker = await _uow.Workers.GetByIdAsync(id);
+
+        if (worker == null)
         {
-            var worker = await _uow.Workers.GetByIdAsync(id);
-
-            if (worker == null)
-            {
-                _logger.LogWarning("Worker {WorkerId} not found for deletion", id);
-                return Result<WorkerDTO>.Ok(null);
-            }
-
-            _uow.Workers.Delete(worker);
-            await _uow.SaveAsync();
-            await InvalidateAndNotifyAsync("workers", _hub, "WorkersChanged");
-
-            _workersDeleted.Add(1);
-
-            _logger.LogInformation("Worker {WorkerId} deleted successfully", id);
-
+            _logger.LogWarning("Worker {WorkerId} not found for deletion", id);
             return Result<WorkerDTO>.Ok(null);
         }
-        catch (Exception ex)
-        {
-            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            span?.AddException(ex);
 
-            _logger.LogError(ex, "Failed to delete worker {WorkerId}", id);
+        _uow.Workers.Delete(worker);
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("workers", _hub, "WorkersChanged");
 
-            throw;
-        }
+        _workersDeleted.Add(1);
+
+        _logger.LogInformation("Worker {WorkerId} deleted successfully", id);
+
+        return Result<WorkerDTO>.Ok(null);
     }
 
     // =========================

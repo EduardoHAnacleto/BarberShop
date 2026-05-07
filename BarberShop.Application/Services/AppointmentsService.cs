@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+
 namespace BarberShop.Application.Services;
 
 public class AppointmentsService : BaseService, IAppointmentsService
@@ -136,45 +137,30 @@ public class AppointmentsService : BaseService, IAppointmentsService
             "Creating appointment for CustomerId {CustomerId} with WorkerId {WorkerId} on {ScheduledFor}",
             dto.CustomerId, dto.WorkerId, dto.ScheduledFor);
 
-        try
-        {
-            var entity = _mapper.Map<Appointment>(dto);
+        var entity = _mapper.Map<Appointment>(dto);
 
-            await _uow.Appointments.AddAsync(entity);
-            await _uow.SaveAsync();
-            await InvalidateAndNotifyAsync("appointments", _hub, "AppointmentsChanged");
+        await _uow.Appointments.AddAsync(entity);
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("appointments", _hub, "AppointmentsChanged");
 
-            stopwatch.Stop();
+        stopwatch.Stop();
 
-            span?.SetTag("appointment.id", entity.Id);
-            _appointmentsCreated.Add(1,
-                new TagList
-                {
-                    { "worker.id",  dto.WorkerId  },
-                    { "service.id", dto.ServiceId }
-                });
-            _operationDuration.Record(
-                stopwatch.Elapsed.TotalMilliseconds,
-                new TagList { { "operation", "create" } });
+        span?.SetTag("appointment.id", entity.Id);
+        _appointmentsCreated.Add(1,
+            new TagList
+            {
+                { "worker.id",  dto.WorkerId  },
+                { "service.id", dto.ServiceId }
+            });
+        _operationDuration.Record(
+            stopwatch.Elapsed.TotalMilliseconds,
+            new TagList { { "operation", "create" } });
 
-            _logger.LogInformation(
-                "Appointment {AppointmentId} created in {ElapsedMs}ms",
-                entity.Id, stopwatch.Elapsed.TotalMilliseconds);
+        _logger.LogInformation(
+            "Appointment {AppointmentId} created in {ElapsedMs}ms",
+            entity.Id, stopwatch.Elapsed.TotalMilliseconds);
 
-            return Result<AppointmentResponseDTO>.Ok(_mapper.Map<AppointmentResponseDTO>(entity));
-        }
-        catch (Exception ex)
-        {
-            stopwatch.Stop();
-            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            span?.AddException(ex);
-
-            _logger.LogError(ex,
-                "Failed to create appointment for CustomerId {CustomerId}",
-                dto.CustomerId);
-
-            throw;
-        }
+        return Result<AppointmentResponseDTO>.Ok(_mapper.Map<AppointmentResponseDTO>(entity));
     }
 
     // =========================
@@ -192,48 +178,35 @@ public class AppointmentsService : BaseService, IAppointmentsService
             "Updating appointment {AppointmentId} to status {Status}",
             id, dto.Status);
 
-        try
+        var entity = await _uow.Appointments.GetByIdAsync(id);
+
+        if (entity == null)
         {
-            var entity = await _uow.Appointments.GetByIdAsync(id);
-
-            if (entity == null)
-            {
-                _logger.LogWarning("Appointment {AppointmentId} not found for update", id);
-                return Result<AppointmentResponseDTO>.Ok(null);
-            }
-
-            var previousStatus = entity.Status;
-            _mapper.Map(dto, entity);
-
-            if (dto.Status == Status.Completed && entity.CompletedAt == null)
-                entity.CompletedAt = DateTime.UtcNow;
-
-            _uow.Appointments.Update(entity);
-            await _uow.SaveAsync();
-            await InvalidateAndNotifyAsync("appointments", _hub, "AppointmentsChanged");
-
-            stopwatch.Stop();
-
-            _operationDuration.Record(
-                stopwatch.Elapsed.TotalMilliseconds,
-                new TagList { { "operation", "update" } });
-
-            _logger.LogInformation(
-                "Appointment {AppointmentId} updated from {PreviousStatus} to {NewStatus} in {ElapsedMs}ms",
-                id, previousStatus, dto.Status, stopwatch.Elapsed.TotalMilliseconds);
-
-            return Result<AppointmentResponseDTO>.Ok(_mapper.Map<AppointmentResponseDTO>(entity));
+            _logger.LogWarning("Appointment {AppointmentId} not found for update", id);
+            return Result<AppointmentResponseDTO>.Ok(null);
         }
-        catch (Exception ex)
-        {
-            stopwatch.Stop();
-            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            span?.AddException(ex);
 
-            _logger.LogError(ex, "Failed to update appointment {AppointmentId}", id);
+        var previousStatus = entity.Status;
+        _mapper.Map(dto, entity);
 
-            throw;
-        }
+        if (dto.Status == Status.Completed && entity.CompletedAt == null)
+            entity.CompletedAt = DateTime.UtcNow;
+
+        _uow.Appointments.Update(entity);
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("appointments", _hub, "AppointmentsChanged");
+
+        stopwatch.Stop();
+
+        _operationDuration.Record(
+            stopwatch.Elapsed.TotalMilliseconds,
+            new TagList { { "operation", "update" } });
+
+        _logger.LogInformation(
+            "Appointment {AppointmentId} updated from {PreviousStatus} to {NewStatus} in {ElapsedMs}ms",
+            id, previousStatus, dto.Status, stopwatch.Elapsed.TotalMilliseconds);
+
+        return Result<AppointmentResponseDTO>.Ok(_mapper.Map<AppointmentResponseDTO>(entity));
     }
 
     // =========================
@@ -246,58 +219,46 @@ public class AppointmentsService : BaseService, IAppointmentsService
 
         _logger.LogInformation("Cancelling appointment {AppointmentId}", id);
 
-        try
+        var entity = await _uow.Appointments.GetByIdAsync(id);
+
+        if (entity == null)
         {
-            var entity = await _uow.Appointments.GetByIdAsync(id);
-
-            if (entity == null)
-            {
-                _logger.LogWarning("Appointment {AppointmentId} not found", id);
-                return Result<AppointmentResponseDTO>.Fail("Appointment not found");
-            }
-
-            if (entity.Status == Status.Cancelled)
-            {
-                _logger.LogWarning("Appointment {AppointmentId} already cancelled", id);
-                return Result<AppointmentResponseDTO>.Fail("Already cancelled");
-            }
-
-            if (entity.Status == Status.Completed)
-            {
-                _logger.LogWarning("Appointment {AppointmentId} is completed, cannot cancel", id);
-                return Result<AppointmentResponseDTO>.Fail("Completed cannot be cancelled");
-            }
-
-            if (entity.Status == Status.Deleted)
-            {
-                _logger.LogWarning("Appointment {AppointmentId} already deleted", id);
-                return Result<AppointmentResponseDTO>.Fail("Already deleted");
-            }
-
-            await _uow.Appointments.VirtualDelete(entity);
-            await _uow.SaveAsync();
-            await InvalidateAndNotifyAsync("appointments", _hub, "AppointmentsChanged");
-
-            _appointmentsCancelled.Add(1,
-                new TagList
-                {
-                    { "worker.id",  entity.WorkerId  },
-                    { "service.id", entity.ServiceId }
-                });
-
-            _logger.LogInformation("Appointment {AppointmentId} cancelled successfully", id);
-
-            return Result<AppointmentResponseDTO>.Ok(null);
+            _logger.LogWarning("Appointment {AppointmentId} not found", id);
+            return Result<AppointmentResponseDTO>.Fail("Appointment not found");
         }
-        catch (Exception ex)
+
+        if (entity.Status == Status.Cancelled)
         {
-            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            span?.AddException(ex);
-
-            _logger.LogError(ex, "Failed to cancel appointment {AppointmentId}", id);
-
-            throw;
+            _logger.LogWarning("Appointment {AppointmentId} already cancelled", id);
+            return Result<AppointmentResponseDTO>.Fail("Already cancelled");
         }
+
+        if (entity.Status == Status.Completed)
+        {
+            _logger.LogWarning("Appointment {AppointmentId} is completed, cannot cancel", id);
+            return Result<AppointmentResponseDTO>.Fail("Completed cannot be cancelled");
+        }
+
+        if (entity.Status == Status.Deleted)
+        {
+            _logger.LogWarning("Appointment {AppointmentId} already deleted", id);
+            return Result<AppointmentResponseDTO>.Fail("Already deleted");
+        }
+
+        await _uow.Appointments.VirtualDelete(entity);
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("appointments", _hub, "AppointmentsChanged");
+
+        _appointmentsCancelled.Add(1,
+            new TagList
+            {
+                { "worker.id",  entity.WorkerId  },
+                { "service.id", entity.ServiceId }
+            });
+
+        _logger.LogInformation("Appointment {AppointmentId} cancelled successfully", id);
+
+        return Result<AppointmentResponseDTO>.Ok(null);
     }
 
     // =========================
@@ -410,50 +371,38 @@ public class AppointmentsService : BaseService, IAppointmentsService
         if (time <= TimeSpan.Zero)
             return Result<List<AppointmentResponseDTO>>.Fail("Delay time must be greater than zero");
 
-        try
+        var tasks = idList.Select(async id =>
         {
-            var tasks = idList.Select(async id =>
+            var entity = await _uow.Appointments.GetByIdAsync(id);
+
+            if (entity == null)
             {
-                var entity = await _uow.Appointments.GetByIdAsync(id);
+                _logger.LogWarning("Appointment {AppointmentId} not found for delay", id);
+                return null;
+            }
 
-                if (entity == null)
-                {
-                    _logger.LogWarning("Appointment {AppointmentId} not found for delay", id);
-                    return null;
-                }
+            entity.ScheduledFor = entity.ScheduledFor.Add(time);
+            entity.LastUpdatedAt = DateTime.UtcNow;
+            _uow.Appointments.Update(entity);
 
-                entity.ScheduledFor = entity.ScheduledFor.Add(time);
-                entity.LastUpdatedAt = DateTime.UtcNow;
-                _uow.Appointments.Update(entity);
+            return _mapper.Map<AppointmentResponseDTO>(entity);
+        });
 
-                return _mapper.Map<AppointmentResponseDTO>(entity);
-            });
+        var results = (await Task.WhenAll(tasks))
+            .Where(x => x != null)
+            .ToList();
 
-            var results = (await Task.WhenAll(tasks))
-                .Where(x => x != null)
-                .ToList();
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("appointments", _hub, "AppointmentsChanged");
 
-            await _uow.SaveAsync();
-            await InvalidateAndNotifyAsync("appointments", _hub, "AppointmentsChanged");
+        _appointmentsDelayed.Add(results.Count,
+            new TagList { { "delay.minutes", time.TotalMinutes } });
 
-            _appointmentsDelayed.Add(results.Count,
-                new TagList { { "delay.minutes", time.TotalMinutes } });
+        _logger.LogInformation(
+            "{Delayed} of {Total} appointments delayed by {Minutes} minutes",
+            results.Count, idList.Count, time.TotalMinutes);
 
-            _logger.LogInformation(
-                "{Delayed} of {Total} appointments delayed by {Minutes} minutes",
-                results.Count, idList.Count, time.TotalMinutes);
-
-            return Result<List<AppointmentResponseDTO>>.Ok(results!);
-        }
-        catch (Exception ex)
-        {
-            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            span?.AddException(ex);
-
-            _logger.LogError(ex, "Failed to delay appointments");
-
-            throw;
-        }
+        return Result<List<AppointmentResponseDTO>>.Ok(results!);
     }
 
     // =========================
@@ -469,48 +418,36 @@ public class AppointmentsService : BaseService, IAppointmentsService
         if (idList == null || idList.Count == 0)
             return Result<List<AppointmentResponseDTO>>.Fail("No appointments provided");
 
-        try
+        var tasks = idList.Select(async id =>
         {
-            var tasks = idList.Select(async id =>
+            var entity = await _uow.Appointments.GetByIdAsync(id);
+
+            if (entity == null)
             {
-                var entity = await _uow.Appointments.GetByIdAsync(id);
+                _logger.LogWarning(
+                    "Appointment {AppointmentId} not found for batch cancel", id);
+                return null;
+            }
 
-                if (entity == null)
-                {
-                    _logger.LogWarning(
-                        "Appointment {AppointmentId} not found for batch cancel", id);
-                    return null;
-                }
+            await _uow.Appointments.VirtualDelete(entity);
 
-                await _uow.Appointments.VirtualDelete(entity);
+            return _mapper.Map<AppointmentResponseDTO>(entity);
+        });
 
-                return _mapper.Map<AppointmentResponseDTO>(entity);
-            });
+        var results = (await Task.WhenAll(tasks))
+            .Where(x => x != null)
+            .ToList();
 
-            var results = (await Task.WhenAll(tasks))
-                .Where(x => x != null)
-                .ToList();
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("appointments", _hub, "AppointmentsChanged");
 
-            await _uow.SaveAsync();
-            await InvalidateAndNotifyAsync("appointments", _hub, "AppointmentsChanged");
+        _appointmentsCancelled.Add(results.Count,
+            new TagList { { "source", "batch" } });
 
-            _appointmentsCancelled.Add(results.Count,
-                new TagList { { "source", "batch" } });
+        _logger.LogInformation(
+            "{Cancelled} of {Total} appointments cancelled",
+            results.Count, idList.Count);
 
-            _logger.LogInformation(
-                "{Cancelled} of {Total} appointments cancelled",
-                results.Count, idList.Count);
-
-            return Result<List<AppointmentResponseDTO>>.Ok(results!);
-        }
-        catch (Exception ex)
-        {
-            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            span?.AddException(ex);
-
-            _logger.LogError(ex, "Failed to batch cancel appointments");
-
-            throw;
-        }
+        return Result<List<AppointmentResponseDTO>>.Ok(results!);
     }
 }

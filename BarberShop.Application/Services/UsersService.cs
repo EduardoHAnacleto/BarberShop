@@ -126,49 +126,35 @@ public class UsersService : BaseService, IUsersService
             return Result<UserResponseDTO>.Fail("Invalid Email");
         }
 
-        try
+        var exists = await _uow.Users.GetAllAsync(u => u.Email == dto.Email);
+
+        if (exists.Any())
         {
-            var exists = await _uow.Users.GetAllAsync(u => u.Email == dto.Email);
-
-            if (exists.Any())
-            {
-                _logger.LogWarning(
-                    "User creation failed — email already exists: {Email}", dto.Email);
-                return Result<UserResponseDTO>.Fail("Email already exists");
-            }
-
-            var user = _mapper.Map<User>(dto);
-
-            await _uow.Users.AddAsync(user);
-            await _uow.SaveAsync();
-            await InvalidateAndNotifyAsync("users", _hub, "UsersChanged");
-
-            stopwatch.Stop();
-
-            span?.SetTag("user.id", user.Id);
-            _usersCreated.Add(1,
-                new TagList { { "role", dto.UserRole.ToString() } });
-            _operationDuration.Record(
-                stopwatch.Elapsed.TotalMilliseconds,
-                new TagList { { "operation", "create" } });
-
-            _logger.LogInformation(
-                "User {UserId} ({Email}) created in {ElapsedMs}ms",
-                user.Id, user.Email, stopwatch.Elapsed.TotalMilliseconds);
-
-            return Result<UserResponseDTO>.Ok(_mapper.Map<UserResponseDTO>(user));
+            _logger.LogWarning(
+                "User creation failed — email already exists: {Email}", dto.Email);
+            return Result<UserResponseDTO>.Fail("Email already exists");
         }
-        catch (Exception ex)
-        {
-            stopwatch.Stop();
-            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            span?.AddException(ex);
 
-            _logger.LogError(ex,
-                "Failed to create user with email {Email}", dto.Email);
+        var user = _mapper.Map<User>(dto);
 
-            throw;
-        }
+        await _uow.Users.AddAsync(user);
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("users", _hub, "UsersChanged");
+
+        stopwatch.Stop();
+
+        span?.SetTag("user.id", user.Id);
+        _usersCreated.Add(1,
+            new TagList { { "role", dto.UserRole.ToString() } });
+        _operationDuration.Record(
+            stopwatch.Elapsed.TotalMilliseconds,
+            new TagList { { "operation", "create" } });
+
+        _logger.LogInformation(
+            "User {UserId} ({Email}) created in {ElapsedMs}ms",
+            user.Id, user.Email, stopwatch.Elapsed.TotalMilliseconds);
+
+        return Result<UserResponseDTO>.Ok(_mapper.Map<UserResponseDTO>(user));
     }
 
     // =========================
@@ -183,44 +169,31 @@ public class UsersService : BaseService, IUsersService
 
         _logger.LogInformation("Updating user {UserId}", id);
 
-        try
+        var user = await _uow.Users.GetByIdAsync(id);
+
+        if (user == null)
         {
-            var user = await _uow.Users.GetByIdAsync(id);
-
-            if (user == null)
-            {
-                _logger.LogWarning("User {UserId} not found for update", id);
-                return Result<UserResponseDTO>.Ok(null);
-            }
-
-            _mapper.Map(dto, user);
-
-            _uow.Users.Update(user);
-            await _uow.SaveAsync();
-            await InvalidateAndNotifyAsync("users", _hub, "UsersChanged");
-
-            stopwatch.Stop();
-
-            _operationDuration.Record(
-                stopwatch.Elapsed.TotalMilliseconds,
-                new TagList { { "operation", "update" } });
-
-            _logger.LogInformation(
-                "User {UserId} updated in {ElapsedMs}ms",
-                id, stopwatch.Elapsed.TotalMilliseconds);
-
-            return Result<UserResponseDTO>.Ok(_mapper.Map<UserResponseDTO>(user));
+            _logger.LogWarning("User {UserId} not found for update", id);
+            return Result<UserResponseDTO>.Ok(null);
         }
-        catch (Exception ex)
-        {
-            stopwatch.Stop();
-            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            span?.AddException(ex);
 
-            _logger.LogError(ex, "Failed to update user {UserId}", id);
+        _mapper.Map(dto, user);
 
-            throw;
-        }
+        _uow.Users.Update(user);
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("users", _hub, "UsersChanged");
+
+        stopwatch.Stop();
+
+        _operationDuration.Record(
+            stopwatch.Elapsed.TotalMilliseconds,
+            new TagList { { "operation", "update" } });
+
+        _logger.LogInformation(
+            "User {UserId} updated in {ElapsedMs}ms",
+            id, stopwatch.Elapsed.TotalMilliseconds);
+
+        return Result<UserResponseDTO>.Ok(_mapper.Map<UserResponseDTO>(user));
     }
 
     // =========================
@@ -233,34 +206,22 @@ public class UsersService : BaseService, IUsersService
 
         _logger.LogInformation("Deleting user {UserId}", id);
 
-        try
+        var user = await _uow.Users.GetByIdAsync(id);
+
+        if (user == null)
         {
-            var user = await _uow.Users.GetByIdAsync(id);
-
-            if (user == null)
-            {
-                _logger.LogWarning("User {UserId} not found for deletion", id);
-                return Result<UserResponseDTO>.Ok(null);
-            }
-
-            _uow.Users.Delete(user);
-            await _uow.SaveAsync();
-            await InvalidateAndNotifyAsync("users", _hub, "UsersChanged");
-
-            _usersDeleted.Add(1);
-
-            _logger.LogInformation("User {UserId} deleted successfully", id);
-
+            _logger.LogWarning("User {UserId} not found for deletion", id);
             return Result<UserResponseDTO>.Ok(null);
         }
-        catch (Exception ex)
-        {
-            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            span?.AddException(ex);
 
-            _logger.LogError(ex, "Failed to delete user {UserId}", id);
+        _uow.Users.Delete(user);
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("users", _hub, "UsersChanged");
 
-            throw;
-        }
+        _usersDeleted.Add(1);
+
+        _logger.LogInformation("User {UserId} deleted successfully", id);
+
+        return Result<UserResponseDTO>.Ok(null);
     }
 }

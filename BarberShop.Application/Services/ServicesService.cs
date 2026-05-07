@@ -6,7 +6,6 @@ using BarberShop.Application.Interfaces;
 using BarberShop.Domain.Models;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
-using OpenTelemetry.Trace;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 
@@ -140,39 +139,25 @@ public class ServicesService : BaseService, IServicesService
             return Result<ServiceDTO>.Fail("Invalid Price");
         }
 
-        try
-        {
-            var entity = _mapper.Map<Service>(dto);
+        var entity = _mapper.Map<Service>(dto);
 
-            await _uow.Services.AddAsync(entity);
-            await _uow.SaveAsync();
-            await InvalidateAndNotifyAsync("services", _hub, "ServicesChanged");
+        await _uow.Services.AddAsync(entity);
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("services", _hub, "ServicesChanged");
 
-            stopwatch.Stop();
+        stopwatch.Stop();
 
-            span?.SetTag("service.id", entity.Id);
-            _servicesCreated.Add(1);
-            _operationDuration.Record(
-                stopwatch.Elapsed.TotalMilliseconds,
-                new TagList { { "operation", "create" } });
+        span?.SetTag("service.id", entity.Id);
+        _servicesCreated.Add(1);
+        _operationDuration.Record(
+            stopwatch.Elapsed.TotalMilliseconds,
+            new TagList { { "operation", "create" } });
 
-            _logger.LogInformation(
-                "Service {ServiceId} ({ServiceName}) created in {ElapsedMs}ms",
-                entity.Id, entity.Name, stopwatch.Elapsed.TotalMilliseconds);
+        _logger.LogInformation(
+            "Service {ServiceId} ({ServiceName}) created in {ElapsedMs}ms",
+            entity.Id, entity.Name, stopwatch.Elapsed.TotalMilliseconds);
 
-            return Result<ServiceDTO>.Ok(_mapper.Map<ServiceDTO>(entity));
-        }
-        catch (Exception ex)
-        {
-            stopwatch.Stop();
-            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            span?.AddException(ex);
-
-            _logger.LogError(ex,
-                "Failed to create service {ServiceName}", dto.Name);
-
-            throw;
-        }
+        return Result<ServiceDTO>.Ok(_mapper.Map<ServiceDTO>(entity));
     }
 
     // =========================
@@ -187,45 +172,32 @@ public class ServicesService : BaseService, IServicesService
 
         _logger.LogInformation("Updating service {ServiceId}", id);
 
-        try
+        var service = await _uow.Services.GetByIdAsync(id);
+
+        if (service == null)
         {
-            var service = await _uow.Services.GetByIdAsync(id);
-
-            if (service == null)
-            {
-                _logger.LogWarning("Service {ServiceId} not found for update", id);
-                return Result<ServiceDTO>.Ok(null);
-            }
-
-            _mapper.Map(dto, service);
-            service.LastUpdatedAt = DateTime.UtcNow;
-
-            _uow.Services.Update(service);
-            await _uow.SaveAsync();
-            await InvalidateAndNotifyAsync("services", _hub, "ServicesChanged");
-
-            stopwatch.Stop();
-
-            _operationDuration.Record(
-                stopwatch.Elapsed.TotalMilliseconds,
-                new TagList { { "operation", "update" } });
-
-            _logger.LogInformation(
-                "Service {ServiceId} updated in {ElapsedMs}ms",
-                id, stopwatch.Elapsed.TotalMilliseconds);
-
-            return Result<ServiceDTO>.Ok(_mapper.Map<ServiceDTO>(service));
+            _logger.LogWarning("Service {ServiceId} not found for update", id);
+            return Result<ServiceDTO>.Ok(null);
         }
-        catch (Exception ex)
-        {
-            stopwatch.Stop();
-            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            span?.AddException(ex);
 
-            _logger.LogError(ex, "Failed to update service {ServiceId}", id);
+        _mapper.Map(dto, service);
+        service.LastUpdatedAt = DateTime.UtcNow;
 
-            throw;
-        }
+        _uow.Services.Update(service);
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("services", _hub, "ServicesChanged");
+
+        stopwatch.Stop();
+
+        _operationDuration.Record(
+            stopwatch.Elapsed.TotalMilliseconds,
+            new TagList { { "operation", "update" } });
+
+        _logger.LogInformation(
+            "Service {ServiceId} updated in {ElapsedMs}ms",
+            id, stopwatch.Elapsed.TotalMilliseconds);
+
+        return Result<ServiceDTO>.Ok(_mapper.Map<ServiceDTO>(service));
     }
 
     // =========================
@@ -238,34 +210,22 @@ public class ServicesService : BaseService, IServicesService
 
         _logger.LogInformation("Deleting service {ServiceId}", id);
 
-        try
+        var service = await _uow.Services.GetByIdAsync(id);
+
+        if (service == null)
         {
-            var service = await _uow.Services.GetByIdAsync(id);
-
-            if (service == null)
-            {
-                _logger.LogWarning("Service {ServiceId} not found for deletion", id);
-                return Result<ServiceDTO>.Ok(null);
-            }
-
-            _uow.Services.Delete(service);
-            await _uow.SaveAsync();
-            await InvalidateAndNotifyAsync("services", _hub, "ServicesChanged");
-
-            _servicesDeleted.Add(1);
-
-            _logger.LogInformation("Service {ServiceId} deleted successfully", id);
-
+            _logger.LogWarning("Service {ServiceId} not found for deletion", id);
             return Result<ServiceDTO>.Ok(null);
         }
-        catch (Exception ex)
-        {
-            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            span?.AddException(ex);
 
-            _logger.LogError(ex, "Failed to delete service {ServiceId}", id);
+        _uow.Services.Delete(service);
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("services", _hub, "ServicesChanged");
 
-            throw;
-        }
+        _servicesDeleted.Add(1);
+
+        _logger.LogInformation("Service {ServiceId} deleted successfully", id);
+
+        return Result<ServiceDTO>.Ok(null);
     }
 }
