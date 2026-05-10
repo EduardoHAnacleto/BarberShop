@@ -1,0 +1,504 @@
+services:
+
+  # =========================
+  # SQL Server
+  # =========================
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: barbershop-sqlserver
+    environment:
+      SA_PASSWORD: "BarberShop@2024"
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: "Express"
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/opt/mssql-tools18/bin/sqlcmd",
+          "-S", "localhost",
+          "-U", "sa",
+          "-P", "BarberShop@2024",
+          "-Q", "SELECT 1",
+          "-C"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  # =========================
+  # SQL Server Init
+  # Creates database, tables and seeds admin user.
+  # Runs once and exits — uses the same mssql image (has sqlcmd built in).
+  # =========================
+  sqlserver-init:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: barbershop-sqlserver-init
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    environment:
+      SA_PASSWORD: "BarberShop@2024"
+    # The schema is passed as an environment variable and piped into sqlcmd
+    # so the recruiter does not need any extra files on disk.
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        /opt/mssql-tools18/bin/sqlcmd -S sqlserver -U sa -P "BarberShop@2024" -C -l 30 -Q "
+          IF NOT EXISTS (SELECT name FROM sys.databases WHERE name = 'barbershop')
+            CREATE DATABASE barbershop;
+        "
+
+        /opt/mssql-tools18/bin/sqlcmd -S sqlserver -U sa -P "BarberShop@2024" -d barbershop -C -l 30 -Q "
+          IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[Services]') AND type = 'U')
+          BEGIN
+            CREATE TABLE [dbo].[Services] (
+              [ServiceId]          INT           NOT NULL IDENTITY(1,1),
+              [ServiceName]        NVARCHAR(100) NOT NULL,
+              [ServiceDescription] NVARCHAR(500) NOT NULL DEFAULT '',
+              [ServiceDuration]    INT           NOT NULL,
+              [ServicePrice]       DECIMAL(10,2) NOT NULL,
+              [CreatedAt]          DATETIME2     NOT NULL DEFAULT GETUTCDATE(),
+              [LastUpdatedAt]      DATETIME2     NULL,
+              CONSTRAINT [PK_Services] PRIMARY KEY ([ServiceId])
+            );
+          END
+
+          IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[Customers]') AND type = 'U')
+          BEGIN
+            CREATE TABLE [dbo].[Customers] (
+              [CustomerId]          INT           NOT NULL IDENTITY(1,1),
+              [CustomerName]        NVARCHAR(100) NOT NULL,
+              [CustomerDateOfBirth] DATETIME2     NULL,
+              [CustomerEmail]       NVARCHAR(200) NOT NULL DEFAULT '',
+              [CustomerPhoneNumber] NVARCHAR(20)  NOT NULL DEFAULT '',
+              [CreatedAt]           DATETIME2     NOT NULL DEFAULT GETUTCDATE(),
+              [LastUpdatedAt]       DATETIME2     NULL,
+              CONSTRAINT [PK_Customers] PRIMARY KEY ([CustomerId])
+            );
+          END
+
+          IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[Workers]') AND type = 'U')
+          BEGIN
+            CREATE TABLE [dbo].[Workers] (
+              [WorkerId]          INT           NOT NULL IDENTITY(1,1),
+              [WorkerName]        NVARCHAR(100) NOT NULL,
+              [WorkerDateOfBirth] DATETIME2     NOT NULL,
+              [WorkerAddress]     NVARCHAR(200) NOT NULL DEFAULT '',
+              [WorkerPosition]    NVARCHAR(100) NOT NULL DEFAULT '',
+              [WorkerPhoneNumber] NVARCHAR(20)  NOT NULL DEFAULT '',
+              [WorkerWagePerHour] DECIMAL(10,2) NOT NULL,
+              [Email]             NVARCHAR(200) NOT NULL DEFAULT '',
+              [CreatedAt]         DATETIME2     NOT NULL DEFAULT GETUTCDATE(),
+              [LastUpdatedAt]     DATETIME2     NULL,
+              CONSTRAINT [PK_Workers] PRIMARY KEY ([WorkerId])
+            );
+          END
+
+          IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[WorkersService]') AND type = 'U')
+          BEGIN
+            CREATE TABLE [dbo].[WorkersService] (
+              [ProvidedServicesServiceId] INT NOT NULL,
+              [WorkersWorkerId]           INT NOT NULL,
+              CONSTRAINT [PK_WorkersService]          PRIMARY KEY ([ProvidedServicesServiceId], [WorkersWorkerId]),
+              CONSTRAINT [FK_WorkersService_Services] FOREIGN KEY ([ProvidedServicesServiceId]) REFERENCES [dbo].[Services] ([ServiceId]),
+              CONSTRAINT [FK_WorkersService_Workers]  FOREIGN KEY ([WorkersWorkerId])           REFERENCES [dbo].[Workers]  ([WorkerId])
+            );
+          END
+
+          IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[WorkerServices]') AND type = 'U')
+          BEGIN
+            CREATE TABLE [dbo].[WorkerServices] (
+              [WSWorkerId]  INT NOT NULL,
+              [WSServiceId] INT NOT NULL,
+              CONSTRAINT [PK_WorkerServices]          PRIMARY KEY ([WSWorkerId], [WSServiceId]),
+              CONSTRAINT [FK_WorkerServices_Workers]  FOREIGN KEY ([WSWorkerId])  REFERENCES [dbo].[Workers]  ([WorkerId]),
+              CONSTRAINT [FK_WorkerServices_Services] FOREIGN KEY ([WSServiceId]) REFERENCES [dbo].[Services] ([ServiceId])
+            );
+          END
+
+          IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[Users]') AND type = 'U')
+          BEGIN
+            CREATE TABLE [dbo].[Users] (
+              [UserId]                  INT           NOT NULL IDENTITY(1,1),
+              [UserEmail]               NVARCHAR(200) NOT NULL,
+              [UserPasswordHash]        NVARCHAR(500) NOT NULL DEFAULT '',
+              [UserRole]                INT           NOT NULL DEFAULT 0,
+              [UserIsActive]            BIT           NOT NULL DEFAULT 1,
+              [UserCreatedAt]           DATETIME2     NOT NULL DEFAULT GETUTCDATE(),
+              [UserFailedLoginAttempts] INT           NOT NULL DEFAULT 0,
+              [UserLockoutEnd]          DATETIME2     NULL,
+              [UserGoogleId]            NVARCHAR(200) NULL,
+              [UserCustomerId]          INT           NULL,
+              [UserWorkerId]            INT           NULL,
+              CONSTRAINT [PK_Users]           PRIMARY KEY ([UserId]),
+              CONSTRAINT [FK_Users_Customers] FOREIGN KEY ([UserCustomerId]) REFERENCES [dbo].[Customers] ([CustomerId]),
+              CONSTRAINT [FK_Users_Workers]   FOREIGN KEY ([UserWorkerId])   REFERENCES [dbo].[Workers]   ([WorkerId])
+            );
+          END
+
+          IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[Appointments]') AND type = 'U')
+          BEGIN
+            CREATE TABLE [dbo].[Appointments] (
+              [AppointmentId]           INT           NOT NULL IDENTITY(1,1),
+              [AppointmentWorkerId]     INT           NOT NULL,
+              [AppointmentCustomerId]   INT           NOT NULL,
+              [AppointmentServiceId]    INT           NOT NULL,
+              [AppointmentScheduledFor] DATETIME2     NOT NULL,
+              [AppointmentStatus]       INT           NOT NULL DEFAULT 0,
+              [AppointmentCompletedAt]  DATETIME2     NULL,
+              [AppointmentExtraDetails] NVARCHAR(500) NOT NULL DEFAULT '',
+              [CreatedAt]               DATETIME2     NOT NULL DEFAULT GETUTCDATE(),
+              [LastUpdatedAt]           DATETIME2     NULL,
+              CONSTRAINT [PK_Appointments]          PRIMARY KEY ([AppointmentId]),
+              CONSTRAINT [FK_Appointments_Workers]   FOREIGN KEY ([AppointmentWorkerId])   REFERENCES [dbo].[Workers]   ([WorkerId]),
+              CONSTRAINT [FK_Appointments_Customers] FOREIGN KEY ([AppointmentCustomerId]) REFERENCES [dbo].[Customers] ([CustomerId]),
+              CONSTRAINT [FK_Appointments_Services]  FOREIGN KEY ([AppointmentServiceId])  REFERENCES [dbo].[Services]  ([ServiceId])
+            );
+          END
+
+          IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[BusinessSchedules]') AND type = 'U')
+          BEGIN
+            CREATE TABLE [dbo].[BusinessSchedules] (
+              [Id]        INT  NOT NULL IDENTITY(1,1),
+              [DayOfWeek] INT  NOT NULL,
+              [IsOpen]    BIT  NOT NULL DEFAULT 0,
+              [OpenTime]  TIME NULL,
+              [CloseTime] TIME NULL,
+              [BreakStart] TIME NULL,
+              [BreakEnd]  TIME NULL,
+              CONSTRAINT [PK_BusinessSchedules]           PRIMARY KEY ([Id]),
+              CONSTRAINT [UQ_BusinessSchedules_DayOfWeek] UNIQUE      ([DayOfWeek])
+            );
+          END
+
+          IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[WorkingHours]') AND type = 'U')
+          BEGIN
+            CREATE TABLE [dbo].[WorkingHours] (
+              [Id]                 INT           NOT NULL IDENTITY(1,1),
+              [HolidayClosedFrom]  DATETIME2     NOT NULL,
+              [HolidayClosedUntil] DATETIME2     NULL,
+              [HolidayReason]      NVARCHAR(200) NOT NULL DEFAULT '',
+              [ClosureType]        INT           NOT NULL DEFAULT 0,
+              CONSTRAINT [PK_WorkingHours] PRIMARY KEY ([Id])
+            );
+          END
+
+          IF NOT EXISTS (SELECT 1 FROM [dbo].[BusinessSchedules])
+          BEGIN
+            INSERT INTO [dbo].[BusinessSchedules] ([DayOfWeek],[IsOpen],[OpenTime],[CloseTime],[BreakStart],[BreakEnd])
+            VALUES
+              (0, 0, NULL,     NULL,     NULL,     NULL    ),
+              (1, 1, '09:00', '18:00', '12:00', '13:00'   ),
+              (2, 1, '09:00', '18:00', '12:00', '13:00'   ),
+              (3, 1, '09:00', '18:00', '12:00', '13:00'   ),
+              (4, 1, '09:00', '18:00', '12:00', '13:00'   ),
+              (5, 1, '09:00', '18:00', '12:00', '13:00'   ),
+              (6, 1, '10:30', '16:00', NULL,     NULL      );
+          END
+
+          IF NOT EXISTS (SELECT 1 FROM [dbo].[Users] WHERE [UserEmail] = 'admin@barbershop.com')
+          BEGIN
+            INSERT INTO [dbo].[Users] ([UserEmail],[UserPasswordHash],[UserRole],[UserIsActive],[UserCreatedAt],[UserFailedLoginAttempts])
+            VALUES ('admin@barbershop.com', '$2a$$11$$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2uheWG/igi.', 3, 1, GETUTCDATE(), 0);
+          END
+        "
+    restart: "no"
+
+  # =========================
+  # Redis
+  # =========================
+  redis:
+    image: redis:7-alpine
+    container_name: barbershop-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # =========================
+  # API  ← pre-built image from Docker Hub, no build needed
+  # =========================
+  api:
+    image: SEU_USUARIO/barbershop-api:latest
+    container_name: barbershop-api
+    ports:
+      - "8080:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=Server=sqlserver;Database=barbershop;User Id=sa;Password=BarberShop@2024;TrustServerCertificate=True;
+      - ConnectionStrings__Redis=redis:6379
+      - Jwt__Key=BarberShopSuperSecretKeyForProduction32Chars12
+      - Jwt__Issuer=BarberShop.API
+      - Jwt__Audience=BarberShop.Client
+      - Jwt__ExpiresInMinutes=60
+      - OpenTelemetry__OtlpEndpoint=http://tempo:4317
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      sqlserver-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  # =========================
+  # Prometheus
+  # =========================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: barbershop-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-remote-write-receiver"
+    configs:
+      - source: prometheus_config
+        target: /etc/prometheus/prometheus.yml
+    restart: unless-stopped
+
+  # =========================
+  # Loki
+  # =========================
+  loki:
+    image: grafana/loki:latest
+    container_name: barbershop-loki
+    user: "0"
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki_data:/var/loki
+    command: -config.file=/etc/loki/loki.yml
+    configs:
+      - source: loki_config
+        target: /etc/loki/loki.yml
+    restart: unless-stopped
+
+  # =========================
+  # Tempo
+  # =========================
+  tempo:
+    image: grafana/tempo:latest
+    container_name: barbershop-tempo
+    user: "0"
+    ports:
+      - "3200:3200"
+      - "4317:4317"
+      - "4318:4318"
+    volumes:
+      - tempo_data:/var/tempo
+    command: -config.file=/etc/tempo/tempo.yml
+    configs:
+      - source: tempo_config
+        target: /etc/tempo/tempo.yml
+    restart: unless-stopped
+
+  # =========================
+  # Grafana
+  # =========================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: barbershop-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+    volumes:
+      - grafana_data:/var/lib/grafana
+    configs:
+      - source: grafana_datasources
+        target: /etc/grafana/provisioning/datasources/datasources.yml
+      - source: grafana_dashboards_provider
+        target: /etc/grafana/provisioning/dashboards/dashboards.yml
+      - source: grafana_dashboard
+        target: /var/lib/grafana/dashboards/barbershop.json
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+    restart: unless-stopped
+
+# ============================================================
+# Inline configs — zero extra files needed on recruiter's disk
+# ============================================================
+configs:
+
+  prometheus_config:
+    content: |
+      global:
+        scrape_interval: 15s
+        evaluation_interval: 15s
+      scrape_configs:
+        - job_name: "barbershop-api"
+          static_configs:
+            - targets: ["api:8080"]
+          metrics_path: /metrics
+
+  loki_config:
+    content: |
+      auth_enabled: false
+      server:
+        http_listen_port: 3100
+        grpc_listen_port: 9096
+      common:
+        instance_addr: 127.0.0.1
+        path_prefix: /loki
+        storage:
+          filesystem:
+            chunks_directory: /loki/chunks
+            rules_directory: /loki/rules
+        replication_factor: 1
+        ring:
+          kvstore:
+            store: inmemory
+      query_range:
+        results_cache:
+          cache:
+            embedded_cache:
+              enabled: true
+              max_size_mb: 100
+      schema_config:
+        configs:
+          - from: 2020-10-24
+            store: tsdb
+            object_store: filesystem
+            schema: v13
+            index:
+              prefix: index_
+              period: 24h
+      ruler:
+        alertmanager_url: http://localhost:9093
+
+  tempo_config:
+    content: |
+      server:
+        http_listen_port: 3200
+      distributor:
+        receivers:
+          otlp:
+            protocols:
+              grpc:
+                endpoint: 0.0.0.0:4317
+              http:
+                endpoint: 0.0.0.0:4318
+      storage:
+        trace:
+          backend: local
+          local:
+            path: /var/tempo/blocks
+          wal:
+            path: /var/tempo/wal
+      metrics_generator:
+        registry:
+          external_labels:
+            source: tempo
+            cluster: barbershop
+        storage:
+          path: /var/tempo/generator/wal
+          remote_write:
+            - url: http://prometheus:9090/api/v1/write
+              send_exemplars: true
+      overrides:
+        defaults:
+          metrics_generator:
+            processors: [service-graphs, span-metrics]
+            generate_native_histograms: both
+
+  grafana_datasources:
+    content: |
+      apiVersion: 1
+      datasources:
+        - name: Prometheus
+          type: prometheus
+          uid: prometheus
+          url: http://prometheus:9090
+          isDefault: true
+          editable: true
+        - name: Loki
+          type: loki
+          uid: loki
+          url: http://loki:3100
+          editable: true
+          jsonData:
+            derivedFields:
+              - datasourceUid: tempo
+                matcherRegex: "TraceId=(\\w+)"
+                name: TraceID
+                url: "$${__value.raw}"
+        - name: Tempo
+          type: tempo
+          uid: tempo
+          url: http://tempo:3200
+          editable: true
+          jsonData:
+            tracesToLogsV2:
+              datasourceUid: loki
+              spanStartTimeShift: "-1h"
+              spanEndTimeShift: "1h"
+              filterByTraceID: true
+            serviceMap:
+              datasourceUid: prometheus
+            nodeGraph:
+              enabled: true
+
+  grafana_dashboards_provider:
+    content: |
+      apiVersion: 1
+      providers:
+        - name: barbershop
+          folder: BarberShop
+          type: file
+          options:
+            path: /var/lib/grafana/dashboards
+
+  grafana_dashboard:
+    content: |
+      {
+        "title": "BarberShop API",
+        "uid": "barbershop-api",
+        "timezone": "browser",
+        "refresh": "10s",
+        "panels": [
+          { "title": "Requests per Second",  "type": "timeseries", "gridPos": { "x": 0,  "y": 0,  "w": 12, "h": 8 }, "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(http_server_request_duration_seconds_count[1m])) by (http_route)", "legendFormat": "{{http_route}}" }] },
+          { "title": "P95 Latency (ms)",     "type": "timeseries", "gridPos": { "x": 12, "y": 0,  "w": 12, "h": 8 }, "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket[5m])) by (le, http_route)) * 1000", "legendFormat": "p95 {{http_route}}" }] },
+          { "title": "Error Rate 5xx (%)",   "type": "timeseries", "gridPos": { "x": 0,  "y": 8,  "w": 12, "h": 8 }, "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~\"5..\"}[5m])) / sum(rate(http_server_request_duration_seconds_count[5m])) * 100", "legendFormat": "Error Rate %" }] },
+          { "title": "Appointments Created", "type": "stat",       "gridPos": { "x": 12, "y": 8,  "w": 6,  "h": 8 }, "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(barbershop_appointments_created_total)" }] },
+          { "title": "Appointments Cancelled","type": "stat",      "gridPos": { "x": 18, "y": 8,  "w": 6,  "h": 8 }, "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(barbershop_appointments_cancelled_total)" }] },
+          { "title": "Login Success vs Failed","type": "timeseries","gridPos": { "x": 0,  "y": 16, "w": 12, "h": 8 }, "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(barbershop_auth_login_success_total[5m]))", "legendFormat": "Success" }, { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(barbershop_auth_login_failed_total[5m]))", "legendFormat": "Failed" }] },
+          { "title": ".NET Heap Memory (MB)","type": "timeseries", "gridPos": { "x": 12, "y": 16, "w": 12, "h": 8 }, "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "dotnet_gc_heap_size_bytes / 1024 / 1024", "legendFormat": "Heap MB" }] }
+        ]
+      }
+
+volumes:
+  sqlserver_data:
+  redis_data:
+  prometheus_data:
+  loki_data:
+  tempo_data:
+  grafana_data:

@@ -46,7 +46,8 @@ builder.Services.AddSignalR(options =>
 // Swagger
 // =========================
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+//builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerWithJwt(builder.Configuration);
 
 // =========================
 // Redis
@@ -158,8 +159,11 @@ app.MapPrometheusScrapingEndpoint();
 app.UseCors("FrontendPolicy");
 app.UseStaticFiles();
 
-app.UseSwagger();
-app.UseSwaggerUI();
+//app.UseSwagger();
+//app.UseSwaggerUI();
+app.UseSwaggerWithJwt();
+app.UseAuthentication();
+app.UseAuthorization();
 
 if (app.Environment.IsDevelopment())
 {
