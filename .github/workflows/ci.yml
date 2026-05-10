@@ -41,14 +41,58 @@ jobs:
       # Tests with coverage
       # =========================
       - name: Test
-        run: dotnet test BarberShop.slnx --no-build --configuration Release --verbosity normal --collect:"XPlat Code Coverage" --results-directory ./coverage
+        run: |
+          dotnet test BarberShop.slnx \
+            --no-build \
+            --configuration Release \
+            --verbosity normal \
+            --collect:"XPlat Code Coverage" \
+            --results-directory ./coverage \
+            -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura \
+               DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Exclude="[BarberShop.API]BarberShop.API.Hubs.*,[BarberShop.Application]BarberShop.Application.DTOs.*,[BarberShop.Domain]BarberShop.Domain.Models.*,[BarberShop.Domain]BarberShop.Domain.Enums.*" \
+               DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByFile="**/Program.cs,**/Migrations/**,**/Data/AppDbContext.cs" \
+               DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByAttribute="ExcludeFromCodeCoverage"
 
       # =========================
-      # Publish test coverage
+      # Install ReportGenerator
       # =========================
-      - name: Upload coverage
+      - name: Install ReportGenerator
+        run: dotnet tool install --global dotnet-reportgenerator-globaltool
+
+      # =========================
+      # Generate HTML report
+      # =========================
+      - name: Generate coverage report
+        run: |
+          reportgenerator \
+            -reports:"./coverage/**/coverage.cobertura.xml" \
+            -targetdir:"./coverage/report" \
+            -reporttypes:"Html;MarkdownSummaryGithub;Cobertura" \
+            -title:"BarberShop Coverage Report" \
+            -verbosity:Warning
+
+      # =========================
+      # Print summary to job
+      # =========================
+      - name: Coverage summary
+        run: cat ./coverage/report/SummaryGithub.md >> $GITHUB_STEP_SUMMARY
+
+      # =========================
+      # Publish HTML report
+      # =========================
+      - name: Upload coverage report
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: coverage-report
-          path: ./coverage
+          path: ./coverage/report
+
+      # =========================
+      # Publish raw XML (Cobertura)
+      # =========================
+      - name: Upload raw coverage XML
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-cobertura
+          path: ./coverage/**/coverage.cobertura.xml

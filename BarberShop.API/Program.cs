@@ -3,9 +3,11 @@ using BarberShop.API.Hubs;
 using BarberShop.API.Middleware;
 using BarberShop.Application.Interfaces;
 using BarberShop.Application.Services;
+using BarberShop.Application.Validators;
 using BarberShop.Infrastructure.Data;
 using BarberShop.Infrastructure.Services;
 using BarberShop.Infrastructure.UnitOfWork;
+using FluentValidation;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
@@ -136,6 +138,9 @@ builder.Services.AddMemoryCache();
 // Global Exception Handler
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
+
+//Fluent Validation
+builder.Services.AddValidatorsFromAssemblyContaining<LoginValidator>();
 
 // =========================
 // Pipeline HTTP

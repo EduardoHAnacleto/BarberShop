@@ -7,6 +7,7 @@ namespace BarberShop.Application.Interfaces;
 public interface IAppointmentsService
 {
     Task<List<AppointmentResponseDTO>> GetAllAsync();
+    Task<PagedResult<AppointmentResponseDTO>> GetAllAsync(PaginationParams pagination);
     Task<AppointmentResponseDTO?> GetByIdAsync(int id);
 
     Task<Result<AppointmentResponseDTO>> Create(AppointmentRequestDTO dto);

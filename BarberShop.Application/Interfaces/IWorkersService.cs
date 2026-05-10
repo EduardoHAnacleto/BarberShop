@@ -6,6 +6,7 @@ namespace BarberShop.Application.Interfaces;
 public interface IWorkersService
 {
     Task<List<WorkerDTO>> GetAllAsync();
+    Task<PagedResult<WorkerDTO>> GetAllAsync(PaginationParams pagination);
     Task<WorkerDTO?> GetByIdAsync(int id);
     Task<Result<WorkerDTO>> Create(WorkerDTO dto);
     Task<Result<WorkerDTO>> Update(int id, WorkerDTO dto);

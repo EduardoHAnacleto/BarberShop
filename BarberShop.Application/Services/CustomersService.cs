@@ -81,6 +81,35 @@ public class CustomersService : BaseService, ICustomersService
     }
 
     // =========================
+    // GET ALL PAGED
+    // =========================
+    public async Task<PagedResult<CustomerDTO>> GetAllAsync(PaginationParams pagination)
+    {
+        using var span = _activitySource.StartActivity("GetAllCustomersPaged");
+        span?.SetTag("pagination.page", pagination.Page);
+        span?.SetTag("pagination.pageSize", pagination.PageSize);
+
+        _logger.LogInformation(
+            "Fetching customers page {Page} (size {PageSize})",
+            pagination.Page, pagination.PageSize);
+
+        var paged = await _uow.Customers.GetPagedAsync(pagination);
+
+        var mapped = PagedResult<CustomerDTO>.Create(
+            _mapper.Map<List<CustomerDTO>>(paged.Items),
+            paged.TotalCount,
+            pagination);
+
+        span?.SetTag("customers.totalCount", mapped.TotalCount);
+
+        _logger.LogInformation(
+            "Fetched page {Page}/{TotalPages} ({TotalCount} total customers)",
+            mapped.Page, mapped.TotalPages, mapped.TotalCount);
+
+        return mapped;
+    }
+
+    // =========================
     // GET BY ID
     // =========================
     public async Task<CustomerDTO?> GetByIdAsync(int id)

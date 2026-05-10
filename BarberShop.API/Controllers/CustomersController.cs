@@ -1,4 +1,5 @@
-﻿using BarberShop.Application.DTOs;
+﻿using BarberShop.Application.Common;
+using BarberShop.Application.DTOs;
 using BarberShop.Application.Interfaces;
 using Microsoft.AspNetCore.Mvc;
 
@@ -21,6 +22,11 @@ public class CustomersController : ControllerBase
         var result = await _customersService.GetAllAsync();
         return Ok(result);
     }
+
+    [HttpGet("all/paged")]
+    public async Task<IActionResult> GetAllPaged([FromQuery] PaginationParams pagination)
+    => Ok(await _customersService.GetAllAsync(pagination));
+
 
     [HttpGet("{id:int}")]
     public async Task<IActionResult> GetById(int id)

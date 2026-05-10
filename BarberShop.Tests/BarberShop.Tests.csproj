@@ -5,6 +5,26 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+	  
+	  <!-- Coverlet configuration -->
+	  <CollectCoverage>true</CollectCoverage>
+	  <CoverletOutputFormat>cobertura</CoverletOutputFormat>
+	  <CoverletOutput>./coverage/</CoverletOutput>
+	  <ExcludeByFile>
+		  **/Program.cs,
+		  **/Migrations/**,
+		  **/Data/AppDbContext.cs
+	  </ExcludeByFile>
+	  <ExcludeByAttribute>ExcludeFromCodeCoverage</ExcludeByAttribute>
+	  <Exclude>
+		  [BarberShop.API]BarberShop.API.Hubs.*,
+		  [BarberShop.Application]BarberShop.Application.DTOs.*,
+		  [BarberShop.Domain]BarberShop.Domain.Models.*,
+		  [BarberShop.Domain]BarberShop.Domain.Enums.*
+	  </Exclude>
+	  <Threshold>70</Threshold>
+	  <ThresholdType>line</ThresholdType>
+	  <ThresholdStat>average</ThresholdStat>
   </PropertyGroup>
 
   <ItemGroup>

@@ -81,6 +81,35 @@ public class ServicesService : BaseService, IServicesService
     }
 
     // =========================
+    // GET ALL PAGED
+    // =========================
+    public async Task<PagedResult<ServiceDTO>> GetAllAsync(PaginationParams pagination)
+    {
+        using var span = _activitySource.StartActivity("GetAllServicesPaged");
+        span?.SetTag("pagination.page", pagination.Page);
+        span?.SetTag("pagination.pageSize", pagination.PageSize);
+
+        _logger.LogInformation(
+            "Fetching services page {Page} (size {PageSize})",
+            pagination.Page, pagination.PageSize);
+
+        var paged = await _uow.Services.GetPagedAsync(pagination);
+
+        var mapped = PagedResult<ServiceDTO>.Create(
+            _mapper.Map<List<ServiceDTO>>(paged.Items),
+            paged.TotalCount,
+            pagination);
+
+        span?.SetTag("services.totalCount", mapped.TotalCount);
+
+        _logger.LogInformation(
+            "Fetched page {Page}/{TotalPages} ({TotalCount} total services)",
+            mapped.Page, mapped.TotalPages, mapped.TotalCount);
+
+        return mapped;
+    }
+
+    // =========================
     // GET BY ID
     // =========================
     public async Task<ServiceDTO?> GetByIdAsync(int id)

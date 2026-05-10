@@ -85,6 +85,39 @@ public class WorkersService : BaseService, IWorkersService
     }
 
     // =========================
+    // GET ALL PAGED
+    // =========================
+    public async Task<PagedResult<WorkerDTO>> GetAllAsync(PaginationParams pagination)
+    {
+        using var span = _activitySource.StartActivity("GetAllWorkersPaged");
+        span?.SetTag("pagination.page", pagination.Page);
+        span?.SetTag("pagination.pageSize", pagination.PageSize);
+
+        _logger.LogInformation(
+            "Fetching workers page {Page} (size {PageSize})",
+            pagination.Page, pagination.PageSize);
+
+        var paged = await _uow.Workers.GetPagedAsync(
+            pagination,
+            filter: null,
+            orderBy: null,
+            w => w.ProvidedServices);
+
+        var mapped = PagedResult<WorkerDTO>.Create(
+            _mapper.Map<List<WorkerDTO>>(paged.Items),
+            paged.TotalCount,
+            pagination);
+
+        span?.SetTag("workers.totalCount", mapped.TotalCount);
+
+        _logger.LogInformation(
+            "Fetched page {Page}/{TotalPages} ({TotalCount} total workers)",
+            mapped.Page, mapped.TotalPages, mapped.TotalCount);
+
+        return mapped;
+    }
+
+    // =========================
     // GET BY ID
     // =========================
     public async Task<WorkerDTO?> GetByIdAsync(int id)

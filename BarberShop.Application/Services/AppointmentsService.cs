@@ -92,6 +92,42 @@ public class AppointmentsService : BaseService, IAppointmentsService
     }
 
     // =========================
+    // GET ALL PAGED
+    // =========================
+    public async Task<PagedResult<AppointmentResponseDTO>> GetAllAsync(PaginationParams pagination)
+    {
+        using var span = _activitySource.StartActivity("GetAllAppointmentsPaged");
+        span?.SetTag("pagination.page", pagination.Page);
+        span?.SetTag("pagination.pageSize", pagination.PageSize);
+
+        _logger.LogInformation(
+            "Fetching appointments page {Page} (size {PageSize})",
+            pagination.Page, pagination.PageSize);
+
+        var paged = await _uow.Appointments.GetPagedAsync(
+            pagination,
+            filter: null,
+            orderBy: q => q.OrderByDescending(a => a.ScheduledFor),
+            a => a.Customer,
+            a => a.Worker,
+            a => a.Service);
+
+        var mapped = PagedResult<AppointmentResponseDTO>.Create(
+            _mapper.Map<List<AppointmentResponseDTO>>(paged.Items),
+            paged.TotalCount,
+            pagination);
+
+        span?.SetTag("appointments.totalCount", mapped.TotalCount);
+        span?.SetTag("appointments.totalPages", mapped.TotalPages);
+
+        _logger.LogInformation(
+            "Fetched page {Page}/{TotalPages} ({TotalCount} total appointments)",
+            mapped.Page, mapped.TotalPages, mapped.TotalCount);
+
+        return mapped;
+    }
+
+    // =========================
     // GET BY ID
     // =========================
     public async Task<AppointmentResponseDTO?> GetByIdAsync(int id)

@@ -81,6 +81,35 @@ public class UsersService : BaseService, IUsersService
     }
 
     // =========================
+    // GET ALL PAGED
+    // =========================
+    public async Task<PagedResult<UserResponseDTO>> GetAllAsync(PaginationParams pagination)
+    {
+        using var span = _activitySource.StartActivity("GetAllUsersPaged");
+        span?.SetTag("pagination.page", pagination.Page);
+        span?.SetTag("pagination.pageSize", pagination.PageSize);
+
+        _logger.LogInformation(
+            "Fetching users page {Page} (size {PageSize})",
+            pagination.Page, pagination.PageSize);
+
+        var paged = await _uow.Users.GetPagedAsync(pagination);
+
+        var mapped = PagedResult<UserResponseDTO>.Create(
+            _mapper.Map<List<UserResponseDTO>>(paged.Items),
+            paged.TotalCount,
+            pagination);
+
+        span?.SetTag("users.totalCount", mapped.TotalCount);
+
+        _logger.LogInformation(
+            "Fetched page {Page}/{TotalPages} ({TotalCount} total users)",
+            mapped.Page, mapped.TotalPages, mapped.TotalCount);
+
+        return mapped;
+    }
+
+    // =========================
     // GET BY ID
     // =========================
     public async Task<UserResponseDTO?> GetByIdAsync(int id)

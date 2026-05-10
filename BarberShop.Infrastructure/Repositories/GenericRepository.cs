@@ -1,4 +1,5 @@
-﻿using BarberShop.Application.Interfaces;
+﻿using BarberShop.Application.Common;
+using BarberShop.Application.Interfaces;
 using BarberShop.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using System.Linq.Expressions;
@@ -46,6 +47,36 @@ public class GenericRepository<T> : IRepository<T> where T : class
         return await query.ToListAsync();
     }
 
+    // ===============================
+    // GET PAGED
+    // ===============================
+    public async Task<PagedResult<T>> GetPagedAsync(
+        PaginationParams pagination,
+        Expression<Func<T, bool>>? filter = null,
+        Func<IQueryable<T>, IOrderedQueryable<T>>? orderBy = null,
+        params Expression<Func<T, object>>[] includes)
+    {
+        IQueryable<T> query = _dbSet;
+
+        if (includes != null && includes.Length > 0)
+            foreach (var include in includes)
+                query = query.Include(include);
+
+        if (filter != null)
+            query = query.Where(filter);
+
+        if (orderBy != null)
+            query = orderBy(query);
+
+        var totalCount = await query.CountAsync();
+
+        var items = await query
+            .Skip((pagination.Page - 1) * pagination.PageSize)
+            .Take(pagination.PageSize)
+            .ToListAsync();
+
+        return PagedResult<T>.Create(items, totalCount, pagination);
+    }
     public async Task<T?> GetByIdAsync(int id, params Expression<Func<T, object>>[] includes)
     {
         IQueryable<T> query = _dbSet;

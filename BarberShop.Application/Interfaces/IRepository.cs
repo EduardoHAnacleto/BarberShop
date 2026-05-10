@@ -1,4 +1,5 @@
-﻿using System.Linq.Expressions;
+﻿using BarberShop.Application.Common;
+using System.Linq.Expressions;
 
 namespace BarberShop.Application.Interfaces;
 
@@ -6,6 +7,11 @@ public interface IRepository<T> where T : class
 {
     Task<T?> GetByIdAsync(int id, params Expression<Func<T, object>>[] includes);
     Task<List<T>> GetAllAsync(
+        Expression<Func<T, bool>>? filter = null,
+        Func<IQueryable<T>, IOrderedQueryable<T>>? orderBy = null,
+        params Expression<Func<T, object>>[] includes);
+    Task<PagedResult<T>> GetPagedAsync(
+        PaginationParams pagination,
         Expression<Func<T, bool>>? filter = null,
         Func<IQueryable<T>, IOrderedQueryable<T>>? orderBy = null,
         params Expression<Func<T, object>>[] includes);
