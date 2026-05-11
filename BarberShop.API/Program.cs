@@ -109,6 +109,7 @@ else
 // DI — Serviços
 // =========================
 builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
+builder.Services.AddScoped<IServicesService, ServicesService>();
 builder.Services.AddScoped<IAppointmentsService, AppointmentsService>();
 builder.Services.AddScoped<ICustomersService, CustomersService>();
 builder.Services.AddScoped<IUsersService, UsersService>();
