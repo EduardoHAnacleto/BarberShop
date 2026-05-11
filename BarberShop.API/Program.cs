@@ -165,6 +165,7 @@ app.UseSwaggerWithJwt();
 app.UseAuthentication();
 app.UseAuthorization();
 
+app.UseSwaggerWithJwt();
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
