@@ -74,10 +74,18 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("FrontendPolicy", policy =>
     {
+        // Specific origins with AllowCredentials so the browser will accept
+        // SignalR WebSocket upgrades and authenticated XHR. AllowAnyOrigin
+        // is incompatible with AllowCredentials per the CORS spec.
         policy
+            .WithOrigins(
+                "http://localhost:3000",
+                "http://localhost:3001",
+                "http://127.0.0.1:3000",
+                "http://127.0.0.1:3001")
             .AllowAnyHeader()
-            .AllowAnyOrigin()
-            .AllowAnyMethod();
+            .AllowAnyMethod()
+            .AllowCredentials();
     });
 });
 
@@ -101,8 +109,11 @@ else
                 maxRetryDelay: TimeSpan.FromSeconds(30),
                 errorNumbersToAdd: null);
             sqlOptions.CommandTimeout(60);
-        })
-        .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking));
+        }));
+        // Default tracking — write flows (e.g. WorkersService.Create attaching
+        // existing Services to a new Worker) require tracked entities so EF
+        // does not mistake them for new rows and trigger IDENTITY_INSERT.
+        // Read-heavy queries should opt into AsNoTracking() explicitly.
 }
 
 // =========================

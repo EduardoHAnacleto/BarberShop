@@ -211,6 +211,72 @@ public class AuthService : IAuthService
     }
 
     // =========================
+    // REGISTER CLIENT
+    // =========================
+    public async Task<Result<AuthResponseDTO>> RegisterAsync(RegisterDTO dto)
+    {
+        using var span = _activitySource.StartActivity("Register");
+        span?.SetTag("user.email", dto.Email);
+
+        _logger.LogInformation("Client registration attempt for {Email}", dto.Email);
+
+        // Enforce unique email — the Users table has no DB-level unique constraint
+        // so we check explicitly to return a friendly error instead of a 500.
+        var existing = await _uow.Users.GetByEmailAsync(dto.Email);
+        if (existing != null)
+        {
+            _logger.LogWarning("Registration failed — email already in use: {Email}", dto.Email);
+            return Result<AuthResponseDTO>.Fail("This email is already registered.");
+        }
+
+        try
+        {
+            // Create the customer profile first so we can link it to the user.
+            var customer = new Customer
+            {
+                Name = dto.Name.Trim(),
+                Email = dto.Email.Trim().ToLowerInvariant(),
+                PhoneNumber = dto.PhoneNumber.Trim(),
+                DateOfBirth = dto.DateOfBirth,
+            };
+            await _uow.Customers.AddAsync(customer);
+            await _uow.SaveAsync();
+
+            // Create the user account with a hashed password and Client role.
+            var user = new User
+            {
+                Email = dto.Email.Trim().ToLowerInvariant(),
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password),
+                UserRole = UserRoles.Client,
+                IsActive = true,
+                CustomerId = customer.Id,
+            };
+            await _uow.Users.AddAsync(user);
+            await _uow.SaveAsync();
+
+            var token = _token.GenerateToken(user);
+
+            _loginSuccess.Add(1, new TagList { { "user.role", user.UserRole.ToString() } });
+            _logger.LogInformation(
+                "Client registered successfully: {Email} (UserId {UserId})",
+                dto.Email, user.Id);
+
+            return Result<AuthResponseDTO>.Ok(new AuthResponseDTO
+            {
+                Token = token,
+                Email = user.Email,
+                UserRole = user.UserRole.ToString(),
+            });
+        }
+        catch (Exception ex)
+        {
+            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            _logger.LogError(ex, "Registration failed for {Email}", dto.Email);
+            return Result<AuthResponseDTO>.Fail("Registration failed. Please try again.");
+        }
+    }
+
+    // =========================
     // UNLOCK USER
     // =========================
     public async Task<Result<bool>> UnlockUserAsync(int userId)

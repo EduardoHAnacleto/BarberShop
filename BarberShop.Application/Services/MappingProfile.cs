@@ -18,7 +18,13 @@ namespace BarberShop.Application.Services
 
             // Worker
             CreateMap<Worker, WorkerDTO>();
-            CreateMap<WorkerDTO, Worker>();
+            // Skip ProvidedServices on the inbound mapping; the service layer
+            // re-attaches existing Service entities via _uow.Services.GetByIdAsync.
+            // Without this Ignore, AutoMapper builds new Service instances with
+            // explicit Ids and EF tries to INSERT them, hitting IDENTITY_INSERT.
+            CreateMap<WorkerDTO, Worker>()
+                .ForMember(dest => dest.Id, opt => opt.Ignore())
+                .ForMember(dest => dest.ProvidedServices, opt => opt.Ignore());
 
             // Appointment
             CreateMap<AppointmentRequestDTO, Appointment>()

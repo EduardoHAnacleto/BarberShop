@@ -229,7 +229,22 @@ public class WorkersService : BaseService, IWorkersService
         _mapper.Map(dto, worker);
         worker.LastUpdatedAt = DateTime.UtcNow;
 
-        _uow.Workers.Update(worker);
+        // Sync ProvidedServices: clear existing, then re-add from ServicesId list.
+        // Do NOT call _uow.Workers.Update(worker) — the entity is already tracked from
+        // GetByIdAsync. Calling Update() re-traverses the navigation graph and produces
+        // conflicting Added/Deleted states for the WorkersService shadow join entries,
+        // causing a primary-key conflict on SaveChanges.
+        worker.ProvidedServices.Clear();
+        foreach (var serviceId in dto.ServicesId)
+        {
+            var service = await _uow.Services.GetByIdAsync(serviceId);
+            if (service != null)
+                worker.ProvidedServices.Add(service);
+            else
+                _logger.LogWarning(
+                    "ServiceId {ServiceId} not found during worker update — skipping", serviceId);
+        }
+
         await _uow.SaveAsync();
         await InvalidateAndNotifyAsync("workers", _hub, "WorkersChanged");
 

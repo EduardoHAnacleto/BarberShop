@@ -80,16 +80,16 @@ IF NOT EXISTS (SELECT * FROM sys.objects
     WHERE object_id = OBJECT_ID(N'[dbo].[WorkersService]') AND type = 'U')
 BEGIN
     CREATE TABLE [dbo].[WorkersService] (
-        [ProvidedServicesServiceId] INT NOT NULL,
-        [WorkersWorkerId]           INT NOT NULL,
+        [ProvidedServicesId] INT NOT NULL,
+        [WorkerId]           INT NOT NULL,
 
         CONSTRAINT [PK_WorkersService]
-            PRIMARY KEY ([ProvidedServicesServiceId], [WorkersWorkerId]),
+            PRIMARY KEY ([ProvidedServicesId], [WorkerId]),
 
-        CONSTRAINT [FK_WorkersService_Services] FOREIGN KEY ([ProvidedServicesServiceId])
+        CONSTRAINT [FK_WorkersService_Services] FOREIGN KEY ([ProvidedServicesId])
             REFERENCES [dbo].[Services] ([ServiceId]),
 
-        CONSTRAINT [FK_WorkersService_Workers] FOREIGN KEY ([WorkersWorkerId])
+        CONSTRAINT [FK_WorkersService_Workers] FOREIGN KEY ([WorkerId])
             REFERENCES [dbo].[Workers] ([WorkerId])
     );
 END
@@ -279,11 +279,43 @@ BEGIN
     )
     VALUES (
         'admin@barbershop.com',
-        '$2a$11$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2uheWG/igi.',
+        '$2b$11$cD04dd4G8a7aCXrOcytdb.DxlMxiFpPI6RX/LxK15/G.hdfMlbYNi',
         3,
         1,
         GETUTCDATE(),
         0
+    );
+END
+GO
+
+-- =============================================
+-- Seed — Test worker (password: Worker@123)
+-- =============================================
+IF NOT EXISTS (SELECT 1 FROM [dbo].[Workers] WHERE [Email] = 'carlos@barbershop.com')
+BEGIN
+    INSERT INTO [dbo].[Workers] (
+        [WorkerName], [WorkerDateOfBirth], [WorkerAddress],
+        [WorkerPosition], [WorkerPhoneNumber], [WorkerWagePerHour], [Email]
+    )
+    VALUES (
+        'Carlos Silva', '1990-05-15', 'Rua das Flores 123',
+        'Barber', '+55 11 99999-0001', 25.00, 'carlos@barbershop.com'
+    );
+
+    DECLARE @workerId INT = SCOPE_IDENTITY();
+
+    INSERT INTO [dbo].[Users] (
+        [UserEmail], [UserPasswordHash], [UserRole],
+        [UserIsActive], [UserCreatedAt], [UserFailedLoginAttempts], [UserWorkerId]
+    )
+    VALUES (
+        'carlos@barbershop.com',
+        '$2b$11$zcq0Z3iGdwjj1KXHPsp04ueC6UbcYihSPee5t4HFa.qiJvsxztuCC',
+        1,
+        1,
+        GETUTCDATE(),
+        0,
+        @workerId
     );
 END
 GO
