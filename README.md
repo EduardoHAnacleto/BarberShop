@@ -127,6 +127,8 @@ docker compose up --build
 
 Open Swagger in your browser to explore and test the API.
 
+For the best evaluation experience, I recommend running the complete Full-Stack solution available in the BarberShop-Front repository, which includes the frontend, backend, database and Docker configuration ready for local deployment.
+
 ---
 
 # Project Structure
