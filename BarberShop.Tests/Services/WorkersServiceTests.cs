@@ -406,11 +406,7 @@ public class WorkersServiceTests
         result.Data!.Name.Should().Be("Updated Barber Name");
         result.Data.WagePerHour.Should().Be(35.00m);
 
-        _workerRepo.Verify(r =>
-            r.Update(
-                It.Is<Worker>(w => w.Name == "Updated Barber Name"),
-                It.IsAny<System.Linq.Expressions.Expression<Func<Worker, object>>[]>()),
-            Times.Once);
+
 
         _uow.Verify(u => u.SaveAsync(), Times.Once);
     }

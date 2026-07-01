@@ -16,7 +16,7 @@ public class TokenService
         _config = config;
     }
 
-    public string GenerateToken(User user)
+    public string GenerateToken(User user, bool rememberMe = false)
     {
         var jwt = _config.GetSection("Jwt");
 
@@ -36,13 +36,18 @@ public class TokenService
             new Claim(ClaimTypes.Role, user.UserRole.ToString()),
         };
 
+        // "Remember me" extends token life to 30 days so the user stays signed
+        // in across browser restarts. Default uses the short Jwt:ExpiresInMinutes
+        // for ordinary sessions.
+        var expires = rememberMe
+            ? DateTime.UtcNow.AddDays(30)
+            : DateTime.UtcNow.AddMinutes(int.Parse(jwt["ExpiresInMinutes"]!));
+
         var token = new JwtSecurityToken(
             issuer: jwt["Issuer"],
             audience: jwt["Audience"],
             claims: claims,
-            expires: DateTime.UtcNow.AddMinutes(
-                int.Parse(jwt["ExpiresInMinutes"]!)
-            ),
+            expires: expires,
             signingCredentials: creds
         );
 

@@ -18,6 +18,7 @@ public class AuthServiceTests
     private readonly Mock<IUnitOfWork> _uow;
     private readonly Mock<IUserRepository> _userRepo;
     private readonly TokenService _tokenService;
+    private readonly IConfiguration _config;
     private readonly AuthService _sut;
 
     public AuthServiceTests()
@@ -28,17 +29,19 @@ public class AuthServiceTests
         _uow.Setup(u => u.Users).Returns(_userRepo.Object);
         _uow.Setup(u => u.SaveAsync()).ReturnsAsync(1);
 
-        _tokenService = BuildTokenService();
+        _config = BuildConfig();
+        _tokenService = new TokenService(_config);
 
         _sut = new AuthService(
             _uow.Object,
             _tokenService,
-            NullLogger<AuthService>.Instance);
+            NullLogger<AuthService>.Instance,
+            _config);
     }
 
-    private static TokenService BuildTokenService()
+    private static IConfiguration BuildConfig()
     {
-        var config = new ConfigurationBuilder()
+        return new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["Jwt:Key"]              = "BarberShopSuperSecretKeyForTests32Chars!",
@@ -47,8 +50,6 @@ public class AuthServiceTests
                 ["Jwt:ExpiresInMinutes"] = "60"
             })
             .Build();
-
-        return new TokenService(config);
     }
 
     // =========================

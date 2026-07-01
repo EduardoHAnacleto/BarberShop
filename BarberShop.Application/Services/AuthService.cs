@@ -4,6 +4,7 @@ using BarberShop.Application.Interfaces;
 using BarberShop.Domain.Enums;
 using BarberShop.Domain.Models;
 using Google.Apis.Auth;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
@@ -52,15 +53,18 @@ public class AuthService : IAuthService
     private readonly IUnitOfWork _uow;
     private readonly TokenService _token;
     private readonly ILogger<AuthService> _logger;
+    private readonly IConfiguration _config;
 
     public AuthService(
         IUnitOfWork uow,
         TokenService token,
-        ILogger<AuthService> logger)
+        ILogger<AuthService> logger,
+        IConfiguration config)
     {
         _uow = uow;
         _token = token;
         _logger = logger;
+        _config = config;
     }
 
     // =========================
@@ -120,7 +124,9 @@ public class AuthService : IAuthService
         _uow.Users.Update(user);
         await _uow.SaveAsync();
 
-        var token = _token.GenerateToken(user);
+        // RememberMe extends the JWT lifetime so the cookie can stay signed in
+        // across browser restarts without re-authenticating.
+        var token = _token.GenerateToken(user, dto.RememberMe);
 
         _loginSuccess.Add(1, new TagList { { "user.role", user.UserRole.ToString() } });
         span?.SetTag("user.id", user.Id);
@@ -150,7 +156,22 @@ public class AuthService : IAuthService
 
         try
         {
-            payload = await GoogleJsonWebSignature.ValidateAsync(dto.IdToken);
+            // When a Google client ID is configured, validate the audience claim
+            // against it so tokens issued for another app cannot authenticate here.
+            // Without it, ValidateAsync still verifies signature + issuer + expiry.
+            var googleClientId = _config["Google:ClientId"];
+            if (!string.IsNullOrWhiteSpace(googleClientId))
+            {
+                var settings = new GoogleJsonWebSignature.ValidationSettings
+                {
+                    Audience = new[] { googleClientId }
+                };
+                payload = await GoogleJsonWebSignature.ValidateAsync(dto.IdToken, settings);
+            }
+            else
+            {
+                payload = await GoogleJsonWebSignature.ValidateAsync(dto.IdToken);
+            }
         }
         catch (Exception ex)
         {
@@ -169,20 +190,50 @@ public class AuthService : IAuthService
 
         if (user == null)
         {
+            // First-time Google sign-in: create a linked Customer record so the
+            // booking flow can reuse it (same shape as the manual register flow).
+            // Falls back to the email local part when Google does not return a name.
+            var customerName = !string.IsNullOrWhiteSpace(payload.Name)
+                ? payload.Name
+                : payload.Email.Split('@')[0];
+
+            var customer = new Customer
+            {
+                Name = customerName,
+                Email = payload.Email,
+                PhoneNumber = string.Empty,
+            };
+            await _uow.Customers.AddAsync(customer);
+            await _uow.SaveAsync();
+
             user = new User
             {
                 Email = payload.Email,
                 GoogleId = payload.Subject,
                 UserRole = UserRoles.Client,
                 IsActive = true,
-                PasswordHash = string.Empty
+                PasswordHash = string.Empty,
+                CustomerId = customer.Id,
             };
 
             await _uow.Users.AddAsync(user);
             await _uow.SaveAsync();
 
             _logger.LogInformation(
-                "New user created via Google login: {Email}", payload.Email);
+                "New user created via Google login: {Email} (CustomerId {CustomerId})",
+                payload.Email, customer.Id);
+        }
+        else if (string.IsNullOrEmpty(user.GoogleId))
+        {
+            // Existing email/password account signing in with Google for the first
+            // time — link the Google identity so future Google sign-ins resolve
+            // to the same record.
+            user.GoogleId = payload.Subject;
+            _uow.Users.Update(user);
+            await _uow.SaveAsync();
+
+            _logger.LogInformation(
+                "Existing user {Email} linked to Google id", payload.Email);
         }
 
         if (!user.IsActive)
@@ -193,7 +244,7 @@ public class AuthService : IAuthService
             return Result<AuthResponseDTO>.Fail("Account is inactive");
         }
 
-        var token = _token.GenerateToken(user);
+        var token = _token.GenerateToken(user, dto.RememberMe);
 
         _googleLogins.Add(1);
         span?.SetTag("user.id", user.Id);
