@@ -73,6 +73,18 @@ public class WorkingHoursServiceTests
             Reason = reason
         };
 
+    private static ClosureDTO MakeClosureDTO(
+        DateTime? closedFrom = null,
+        DateTime? closedUntil = null,
+        ClosureType type = ClosureType.UntilSpecificDate,
+        string reason = "Holiday") => new()
+        {
+            ClosedFrom = closedFrom ?? DateTime.UtcNow.AddHours(-1),
+            ClosedUntil = closedUntil ?? DateTime.UtcNow.AddHours(8),
+            ClosureType = type,
+            Reason = reason
+        };
+
     // =========================
     // GET SCHEDULE
     // =========================
@@ -276,7 +288,7 @@ public class WorkingHoursServiceTests
     public async Task AddClosureAsync_WithValidClosure_ReturnsSuccess()
     {
         // Arrange
-        var closure = MakeClosure(reason: "Holiday");
+        var dto = MakeClosureDTO(reason: "Holiday");
 
         _closureRepo
             .Setup(r => r.AddAsync(
@@ -286,7 +298,7 @@ public class WorkingHoursServiceTests
                 System.Linq.Expressions.Expression<Func<WorkingHours, object>>[] _) => w);
 
         // Act
-        var result = await _sut.AddClosureAsync(closure);
+        var result = await _sut.AddClosureAsync(dto);
 
         // Assert
         result.Success.Should().BeTrue();

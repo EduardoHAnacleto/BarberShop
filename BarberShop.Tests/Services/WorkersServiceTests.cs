@@ -1,15 +1,11 @@
-﻿using AutoMapper;
-using BarberShop.API.Hubs;
+using AutoMapper;
 using BarberShop.Application.DTOs;
 using BarberShop.Application.Interfaces;
 using BarberShop.Application.Services;
 using BarberShop.Domain.Models;
-using BarberShop.Infrastructure.Services;
 using FluentAssertions;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
-using StackExchange.Redis;
 
 namespace BarberShop.Tests.Services;
 
@@ -21,99 +17,49 @@ public class WorkersServiceTests
     private readonly Mock<IUnitOfWork> _uow;
     private readonly Mock<IWorkerRepository> _workerRepo;
     private readonly Mock<IServiceRepository> _serviceRepo;
-    private readonly Mock<IHubContext<WorkersHub>> _hub;
+    private readonly Mock<IRedisService> _redis;
+    private readonly Mock<INotificationPublisher> _notifications;
     private readonly IMapper _mapper;
     private readonly WorkersService _sut;
 
     public WorkersServiceTests()
     {
-        // Repositórios
         _workerRepo = new Mock<IWorkerRepository>();
         _serviceRepo = new Mock<IServiceRepository>();
 
-        // UoW
         _uow = new Mock<IUnitOfWork>();
         _uow.Setup(u => u.Workers).Returns(_workerRepo.Object);
         _uow.Setup(u => u.Services).Returns(_serviceRepo.Object);
         _uow.Setup(u => u.SaveAsync()).ReturnsAsync(1);
 
-        // Hub
-        _hub = new Mock<IHubContext<WorkersHub>>();
-        var mockClients = new Mock<IHubClients>();
-        var mockClient = new Mock<IClientProxy>();
-        _hub.Setup(h => h.Clients).Returns(mockClients.Object);
-        mockClients.Setup(c => c.All).Returns(mockClient.Object);
-        mockClient
-            .Setup(c => c.SendCoreAsync(
-                It.IsAny<string>(),
-                It.IsAny<object[]>(),
-                It.IsAny<CancellationToken>()))
+        _redis = new Mock<IRedisService>();
+        _redis.Setup(r => r.GetAsync<List<WorkerDTO>>(It.IsAny<string>()))
+            .ReturnsAsync((List<WorkerDTO>?)null);
+        _redis.Setup(r => r.GetAsync<WorkerDTO>(It.IsAny<string>()))
+            .ReturnsAsync((WorkerDTO?)null);
+        _redis.Setup(r => r.SetAsync(It.IsAny<string>(), It.IsAny<List<WorkerDTO>>(), It.IsAny<TimeSpan?>()))
+            .Returns(Task.CompletedTask);
+        _redis.Setup(r => r.SetAsync(It.IsAny<string>(), It.IsAny<WorkerDTO>(), It.IsAny<TimeSpan?>()))
+            .Returns(Task.CompletedTask);
+        _redis.Setup(r => r.InvalidateByPrefixAsync(It.IsAny<string>()))
             .Returns(Task.CompletedTask);
 
-        // AutoMapper versão 16
+        _notifications = new Mock<INotificationPublisher>();
+        _notifications
+            .Setup(n => n.PublishAsync(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns(Task.CompletedTask);
+
         _mapper = new MapperConfiguration(cfg =>
         {
             cfg.AddProfile<MappingProfile>();
         }, NullLoggerFactory.Instance).CreateMapper();
 
-        _sut = new WorkersService(_uow.Object, _mapper, BuildRedis(), _hub.Object, NullLogger<WorkersService>.Instance);
-    }
-
-    private static RedisService BuildRedis()
-    {
-        var multiplexer = new Mock<IConnectionMultiplexer>();
-        var database = new Mock<IDatabase>();
-        var server = new Mock<IServer>();
-
-        database
-            .Setup(d => d.StringGetAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<CommandFlags>()))
-            .ReturnsAsync(RedisValue.Null);
-
-        database
-            .Setup(d => d.StringSetAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<RedisValue>(),
-                It.IsAny<TimeSpan?>(),
-                It.IsAny<bool>(),
-                It.IsAny<When>(),
-                It.IsAny<CommandFlags>()))
-            .ReturnsAsync(true);
-
-        database
-            .Setup(d => d.KeyDeleteAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<CommandFlags>()))
-            .ReturnsAsync(true);
-
-        multiplexer
-            .Setup(m => m.GetEndPoints(It.IsAny<bool>()))
-            .Returns([new System.Net.DnsEndPoint("localhost", 6379)]);
-
-        multiplexer
-            .Setup(m => m.GetServer(
-                It.IsAny<System.Net.EndPoint>(),
-                It.IsAny<object>()))
-            .Returns(server.Object);
-
-        server
-            .Setup(s => s.Keys(
-                It.IsAny<int>(),
-                It.IsAny<RedisValue>(),
-                It.IsAny<int>(),
-                It.IsAny<long>(),
-                It.IsAny<int>(),
-                It.IsAny<CommandFlags>()))
-            .Returns([]);
-
-        multiplexer
-            .Setup(m => m.GetDatabase(
-                It.IsAny<int>(),
-                It.IsAny<object>()))
-            .Returns(database.Object);
-
-        return new RedisService(multiplexer.Object);
+        _sut = new WorkersService(
+            _uow.Object,
+            _mapper,
+            _redis.Object,
+            _notifications.Object,
+            NullLogger<WorkersService>.Instance);
     }
 
     // =========================
@@ -348,12 +294,12 @@ public class WorkersServiceTests
     }
 
     [Theory]
-    [InlineData(null, 25.00, "Invalid Name")] // nome nulo
-    [InlineData("", 25.00, "Invalid Name")] // nome vazio
-    [InlineData("   ", 25.00, "Invalid Name")] // nome só espaços
-    [InlineData("Short", 25.00, "Invalid Name")] // menos de 10 chars
-    [InlineData("John Doe Barber", 0, "Invalid Wage")] // wage zero
-    [InlineData("John Doe Barber", -1, "Invalid Wage")] // wage negativo
+    [InlineData(null, 25.00, "Invalid Name")]   // null name
+    [InlineData("", 25.00, "Invalid Name")]      // empty name
+    [InlineData("   ", 25.00, "Invalid Name")]   // whitespace only
+    [InlineData("Ana", 25.00, "Invalid Name")]   // under 6 chars
+    [InlineData("John Doe Barber", 0, "Invalid Wage")]   // zero wage
+    [InlineData("John Doe Barber", -1, "Invalid Wage")]  // negative wage
     public async Task Create_WithInvalidDto_ReturnsFailWithExpectedError(
         string? name, decimal wage, string expectedError)
     {
@@ -405,8 +351,6 @@ public class WorkersServiceTests
         result.Data.Should().NotBeNull();
         result.Data!.Name.Should().Be("Updated Barber Name");
         result.Data.WagePerHour.Should().Be(35.00m);
-
-
 
         _uow.Verify(u => u.SaveAsync(), Times.Once);
     }

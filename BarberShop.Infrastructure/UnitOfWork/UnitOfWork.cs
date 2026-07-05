@@ -38,12 +38,18 @@ public class UnitOfWork : IUnitOfWork
 
     public async Task CommitAsync()
     {
-        await _context.SaveChangesAsync();
         await _transaction!.CommitAsync();
+        _transaction.Dispose();
+        _transaction = null;
     }
 
     public async Task RollbackAsync()
-        => await _transaction!.RollbackAsync();
+    {
+        if (_transaction is null) return;
+        await _transaction.RollbackAsync();
+        _transaction.Dispose();
+        _transaction = null;
+    }
 
     public void Dispose()
     {

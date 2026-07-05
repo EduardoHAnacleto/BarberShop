@@ -53,9 +53,9 @@ public class GlobalExceptionHandler : IExceptionHandler
     {
         return statusCode switch
         {
-            HttpStatusCode.BadRequest => exception.Message,
-            HttpStatusCode.NotFound => exception.Message,
-            HttpStatusCode.Conflict => exception.Message,
+            HttpStatusCode.BadRequest => "The request could not be processed",
+            HttpStatusCode.NotFound => "The requested resource was not found",
+            HttpStatusCode.Conflict => "The request conflicts with the current state of the resource",
             HttpStatusCode.Unauthorized => "Unauthorized",
             HttpStatusCode.NotImplemented => "This feature is not implemented yet",
             _ => "An unexpected error occurred"

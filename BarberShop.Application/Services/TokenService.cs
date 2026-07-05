@@ -1,4 +1,4 @@
-﻿using BarberShop.Domain.Models;
+using BarberShop.Domain.Models;
 using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
@@ -9,25 +9,37 @@ namespace BarberShop.Application.Services;
 
 public class TokenService
 {
-    private readonly IConfiguration _config;
+    private readonly SymmetricSecurityKey _key;
+    private readonly string _issuer;
+    private readonly string _audience;
+    private readonly int _expiresInMinutes;
 
     public TokenService(IConfiguration config)
     {
-        _config = config;
+        var jwtKey = config["Jwt:Key"]
+            ?? throw new InvalidOperationException("Jwt:Key is not configured.");
+
+        if (jwtKey.Length < 32)
+            throw new InvalidOperationException("Jwt:Key must be at least 32 characters long.");
+
+        _issuer = config["Jwt:Issuer"]
+            ?? throw new InvalidOperationException("Jwt:Issuer is not configured.");
+
+        _audience = config["Jwt:Audience"]
+            ?? throw new InvalidOperationException("Jwt:Audience is not configured.");
+
+        var expiresRaw = config["Jwt:ExpiresInMinutes"]
+            ?? throw new InvalidOperationException("Jwt:ExpiresInMinutes is not configured.");
+
+        if (!int.TryParse(expiresRaw, out _expiresInMinutes) || _expiresInMinutes <= 0)
+            throw new InvalidOperationException("Jwt:ExpiresInMinutes must be a positive integer.");
+
+        _key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
     }
 
     public string GenerateToken(User user, bool rememberMe = false)
     {
-        var jwt = _config.GetSection("Jwt");
-
-        var key = new SymmetricSecurityKey(
-            Encoding.UTF8.GetBytes(jwt["Key"]!)
-        );
-
-        var creds = new SigningCredentials(
-            key,
-            SecurityAlgorithms.HmacSha256
-        );
+        var creds = new SigningCredentials(_key, SecurityAlgorithms.HmacSha256);
 
         var claims = new[]
         {
@@ -41,11 +53,11 @@ public class TokenService
         // for ordinary sessions.
         var expires = rememberMe
             ? DateTime.UtcNow.AddDays(30)
-            : DateTime.UtcNow.AddMinutes(int.Parse(jwt["ExpiresInMinutes"]!));
+            : DateTime.UtcNow.AddMinutes(_expiresInMinutes);
 
         var token = new JwtSecurityToken(
-            issuer: jwt["Issuer"],
-            audience: jwt["Audience"],
+            issuer: _issuer,
+            audience: _audience,
             claims: claims,
             expires: expires,
             signingCredentials: creds

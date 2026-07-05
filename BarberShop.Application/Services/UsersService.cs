@@ -1,10 +1,8 @@
-﻿using AutoMapper;
-using BarberShop.API.Hubs;
+using AutoMapper;
 using BarberShop.Application.Common;
 using BarberShop.Application.DTOs;
 using BarberShop.Application.Interfaces;
 using BarberShop.Domain.Models;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
@@ -43,19 +41,17 @@ public class UsersService : BaseService, IUsersService
     // =========================
     private readonly IUnitOfWork _uow;
     private readonly IMapper _mapper;
-    private readonly IHubContext<UsersHub> _hub;
     private readonly ILogger<UsersService> _logger;
 
     public UsersService(
         IUnitOfWork uow,
         IMapper mapper,
         IRedisService redis,
-        IHubContext<UsersHub> hub,
-        ILogger<UsersService> logger) : base(redis)
+        INotificationPublisher notifications,
+        ILogger<UsersService> logger) : base(redis, notifications)
     {
         _uow = uow;
         _mapper = mapper;
-        _hub = hub;
         _logger = logger;
     }
 
@@ -168,7 +164,7 @@ public class UsersService : BaseService, IUsersService
 
         await _uow.Users.AddAsync(user);
         await _uow.SaveAsync();
-        await InvalidateAndNotifyAsync("users", _hub, "UsersChanged");
+        await InvalidateAndNotifyAsync("users", "UsersChanged");
 
         stopwatch.Stop();
 
@@ -210,7 +206,7 @@ public class UsersService : BaseService, IUsersService
 
         _uow.Users.Update(user);
         await _uow.SaveAsync();
-        await InvalidateAndNotifyAsync("users", _hub, "UsersChanged");
+        await InvalidateAndNotifyAsync("users", "UsersChanged");
 
         stopwatch.Stop();
 
@@ -245,7 +241,7 @@ public class UsersService : BaseService, IUsersService
 
         _uow.Users.Delete(user);
         await _uow.SaveAsync();
-        await InvalidateAndNotifyAsync("users", _hub, "UsersChanged");
+        await InvalidateAndNotifyAsync("users", "UsersChanged");
 
         _usersDeleted.Add(1);
 

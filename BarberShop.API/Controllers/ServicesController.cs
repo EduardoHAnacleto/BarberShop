@@ -1,6 +1,7 @@
 ﻿using BarberShop.Application.Common;
 using BarberShop.Application.DTOs;
 using BarberShop.Application.Interfaces;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BarberShop.API.Controllers;
@@ -16,6 +17,7 @@ public class ServicesController : ControllerBase
         _servicesService = servicesService;
     }
 
+    [AllowAnonymous]
     [HttpGet("all")]
     public async Task<IActionResult> GetAll()
     {
@@ -23,10 +25,12 @@ public class ServicesController : ControllerBase
         return Ok(result);
     }
 
+    [AllowAnonymous]
     [HttpGet("all/paged")]
     public async Task<IActionResult> GetAllPaged([FromQuery] PaginationParams pagination)
     => Ok(await _servicesService.GetAllAsync(pagination));
 
+    [AllowAnonymous]
     [HttpGet("{id:int}")]
     public async Task<IActionResult> GetById(int id)
     {
@@ -38,6 +42,7 @@ public class ServicesController : ControllerBase
         return Ok(result);
     }
 
+    [Authorize(Roles = "Admin")]
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] ServiceDTO dto)
     {
@@ -52,6 +57,7 @@ public class ServicesController : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = result.Data!.Id }, result.Data);
     }
 
+    [Authorize(Roles = "Admin")]
     [HttpPut("{id:int}")]
     public async Task<IActionResult> Update(int id, [FromBody] ServiceDTO dto)
     {
@@ -69,6 +75,7 @@ public class ServicesController : ControllerBase
         return Ok(result.Data);
     }
 
+    [Authorize(Roles = "Admin")]
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id)
     {

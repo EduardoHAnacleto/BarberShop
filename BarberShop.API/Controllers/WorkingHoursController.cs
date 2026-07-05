@@ -1,6 +1,5 @@
 ﻿using BarberShop.Application.DTOs;
 using BarberShop.Application.Interfaces;
-using BarberShop.Domain.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -46,9 +45,9 @@ public class WorkingHoursController : ControllerBase
 
     [Authorize(Roles = "Admin")]
     [HttpPost("closures")]
-    public async Task<IActionResult> AddClosure([FromBody] WorkingHours closure)
+    public async Task<IActionResult> AddClosure([FromBody] ClosureDTO dto)
     {
-        var result = await _service.AddClosureAsync(closure);
+        var result = await _service.AddClosureAsync(dto);
         return result.Success ? Ok(result.Data) : BadRequest(result.Error);
     }
 

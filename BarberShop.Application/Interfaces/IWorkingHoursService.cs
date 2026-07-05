@@ -13,7 +13,7 @@ public interface IWorkingHoursService
 
     // Closures
     Task<List<WorkingHours>> GetClosuresAsync();
-    Task<Result<WorkingHours>> AddClosureAsync(WorkingHours closure);
+    Task<Result<WorkingHours>> AddClosureAsync(ClosureDTO dto);
     Task<Result<bool>> RemoveClosureAsync(int id);
 
     // Check if the business is open at a specific date and time

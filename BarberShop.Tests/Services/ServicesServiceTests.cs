@@ -1,15 +1,11 @@
 ﻿using AutoMapper;
-using BarberShop.API.Hubs;
 using BarberShop.Application.DTOs;
 using BarberShop.Application.Interfaces;
 using BarberShop.Application.Services;
 using BarberShop.Domain.Models;
-using BarberShop.Infrastructure.Services;
 using FluentAssertions;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
-using StackExchange.Redis;
 
 namespace BarberShop.Tests.Services;
 
@@ -20,99 +16,40 @@ public class ServicesServiceTests
     // =========================
     private readonly Mock<IUnitOfWork> _uow;
     private readonly Mock<IServiceRepository> _serviceRepo;
-    private readonly Mock<IHubContext<ServicesHub>> _hub;
+    private readonly Mock<IRedisService> _redis;
+    private readonly Mock<INotificationPublisher> _notifications;
     private readonly IMapper _mapper;
     private readonly ServicesService _sut;
 
     public ServicesServiceTests()
     {
-        // Repositório e UoW
         _serviceRepo = new Mock<IServiceRepository>();
         _uow = new Mock<IUnitOfWork>();
         _uow.Setup(u => u.Services).Returns(_serviceRepo.Object);
         _uow.Setup(u => u.SaveAsync()).ReturnsAsync(1);
 
-        // Hub
-        _hub = new Mock<IHubContext<ServicesHub>>();
-        var mockClients = new Mock<IHubClients>();
-        var mockClient = new Mock<IClientProxy>();
-        _hub.Setup(h => h.Clients).Returns(mockClients.Object);
-        mockClients.Setup(c => c.All).Returns(mockClient.Object);
-        mockClient
-            .Setup(c => c.SendCoreAsync(
-                It.IsAny<string>(),
-                It.IsAny<object[]>(),
-                It.IsAny<CancellationToken>()))
+        _redis = new Mock<IRedisService>();
+        _redis.Setup(r => r.GetAsync<List<ServiceDTO>>(It.IsAny<string>()))
+            .ReturnsAsync((List<ServiceDTO>?)null);
+        _redis.Setup(r => r.GetAsync<ServiceDTO>(It.IsAny<string>()))
+            .ReturnsAsync((ServiceDTO?)null);
+        _redis.Setup(r => r.SetAsync(It.IsAny<string>(), It.IsAny<List<ServiceDTO>>(), It.IsAny<TimeSpan?>()))
+            .Returns(Task.CompletedTask);
+        _redis.Setup(r => r.SetAsync(It.IsAny<string>(), It.IsAny<ServiceDTO>(), It.IsAny<TimeSpan?>()))
+            .Returns(Task.CompletedTask);
+        _redis.Setup(r => r.InvalidateByPrefixAsync(It.IsAny<string>()))
             .Returns(Task.CompletedTask);
 
-        // AutoMapper versão 16
+        _notifications = new Mock<INotificationPublisher>();
+        _notifications.Setup(n => n.PublishAsync(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns(Task.CompletedTask);
+
         _mapper = new MapperConfiguration(cfg =>
         {
             cfg.AddMaps(typeof(MappingProfile).Assembly);
         }, NullLoggerFactory.Instance).CreateMapper();
 
-        // Redis mockado com cache sempre vazio
-        var redis = BuildRedis();
-
-        _sut = new ServicesService(_uow.Object, _mapper, redis, _hub.Object, NullLogger<ServicesService>.Instance);
-    }
-
-    private static RedisService BuildRedis()
-    {
-        var multiplexer = new Mock<IConnectionMultiplexer>();
-        var database = new Mock<IDatabase>();
-        var server = new Mock<IServer>();
-
-        // Cache sempre vazio — força o serviço a ir ao repositório
-        database
-            .Setup(d => d.StringGetAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<CommandFlags>()))
-            .ReturnsAsync(RedisValue.Null);
-
-        database
-            .Setup(d => d.StringSetAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<RedisValue>(),
-                It.IsAny<TimeSpan?>(),
-                It.IsAny<bool>(),
-                It.IsAny<When>(),
-                It.IsAny<CommandFlags>()))
-            .ReturnsAsync(true);
-
-        database
-            .Setup(d => d.KeyDeleteAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<CommandFlags>()))
-            .ReturnsAsync(true);
-
-        multiplexer
-            .Setup(m => m.GetEndPoints(It.IsAny<bool>()))
-            .Returns([new System.Net.DnsEndPoint("localhost", 6379)]);
-
-        multiplexer
-            .Setup(m => m.GetServer(
-                It.IsAny<System.Net.EndPoint>(),
-                It.IsAny<object>()))
-            .Returns(server.Object);
-
-        server
-            .Setup(s => s.Keys(
-                It.IsAny<int>(),
-                It.IsAny<RedisValue>(),
-                It.IsAny<int>(),
-                It.IsAny<long>(),
-                It.IsAny<int>(),
-                It.IsAny<CommandFlags>()))
-            .Returns([]);
-
-        multiplexer
-            .Setup(m => m.GetDatabase(
-                It.IsAny<int>(),
-                It.IsAny<object>()))
-            .Returns(database.Object);
-
-        return new RedisService(multiplexer.Object);
+        _sut = new ServicesService(_uow.Object, _mapper, _redis.Object, _notifications.Object, NullLogger<ServicesService>.Instance);
     }
 
     // =========================

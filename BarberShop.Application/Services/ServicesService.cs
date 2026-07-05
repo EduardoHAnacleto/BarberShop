@@ -1,10 +1,8 @@
-﻿using AutoMapper;
-using BarberShop.API.Hubs;
+using AutoMapper;
 using BarberShop.Application.Common;
 using BarberShop.Application.DTOs;
 using BarberShop.Application.Interfaces;
 using BarberShop.Domain.Models;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
@@ -43,19 +41,17 @@ public class ServicesService : BaseService, IServicesService
     // =========================
     private readonly IUnitOfWork _uow;
     private readonly IMapper _mapper;
-    private readonly IHubContext<ServicesHub> _hub;
     private readonly ILogger<ServicesService> _logger;
 
     public ServicesService(
         IUnitOfWork uow,
         IMapper mapper,
         IRedisService redis,
-        IHubContext<ServicesHub> hub,
-        ILogger<ServicesService> logger) : base(redis)
+        INotificationPublisher notifications,
+        ILogger<ServicesService> logger) : base(redis, notifications)
     {
         _uow = uow;
         _mapper = mapper;
-        _hub = hub;
         _logger = logger;
     }
 
@@ -172,7 +168,7 @@ public class ServicesService : BaseService, IServicesService
 
         await _uow.Services.AddAsync(entity);
         await _uow.SaveAsync();
-        await InvalidateAndNotifyAsync("services", _hub, "ServicesChanged");
+        await InvalidateAndNotifyAsync("services", "ServicesChanged");
 
         stopwatch.Stop();
 
@@ -214,7 +210,7 @@ public class ServicesService : BaseService, IServicesService
 
         _uow.Services.Update(service);
         await _uow.SaveAsync();
-        await InvalidateAndNotifyAsync("services", _hub, "ServicesChanged");
+        await InvalidateAndNotifyAsync("services", "ServicesChanged");
 
         stopwatch.Stop();
 
@@ -249,7 +245,7 @@ public class ServicesService : BaseService, IServicesService
 
         _uow.Services.Delete(service);
         await _uow.SaveAsync();
-        await InvalidateAndNotifyAsync("services", _hub, "ServicesChanged");
+        await InvalidateAndNotifyAsync("services", "ServicesChanged");
 
         _servicesDeleted.Add(1);
 

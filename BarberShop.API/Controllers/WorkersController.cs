@@ -1,6 +1,7 @@
 ﻿using BarberShop.Application.Common;
 using BarberShop.Application.DTOs;
 using BarberShop.Application.Interfaces;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BarberShop.API.Controllers;
@@ -16,6 +17,7 @@ public class WorkersController : ControllerBase
         _workerService = workerService;
     }
 
+    [AllowAnonymous]
     [HttpGet("all")]
     public async Task<IActionResult> GetAll()
     {
@@ -23,10 +25,12 @@ public class WorkersController : ControllerBase
         return Ok(result);
     }
 
+    [AllowAnonymous]
     [HttpGet("all/paged")]
     public async Task<IActionResult> GetAllPaged([FromQuery] PaginationParams pagination)
     => Ok(await _workerService.GetAllAsync(pagination));
 
+    [AllowAnonymous]
     [HttpGet("{id:int}")]
     public async Task<IActionResult> GetById(int id)
     {
@@ -38,6 +42,7 @@ public class WorkersController : ControllerBase
         return Ok(result);
     }
 
+    [Authorize(Roles = "Admin")]
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] WorkerDTO dto)
     {
@@ -52,6 +57,7 @@ public class WorkersController : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = result.Data!.Id }, result.Data);
     }
 
+    [Authorize(Roles = "Admin")]
     [HttpPut("{id:int}")]
     public async Task<IActionResult> Update(int id, [FromBody] WorkerDTO dto)
     {
@@ -69,6 +75,7 @@ public class WorkersController : ControllerBase
         return NoContent();
     }
 
+    [Authorize(Roles = "Admin")]
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id)
     {
@@ -83,6 +90,7 @@ public class WorkersController : ControllerBase
         return NoContent();
     }
 
+    [AllowAnonymous]
     [HttpGet("by-worker/{id:int}")]
     public async Task<IActionResult> GetServicesByWorker(int id)
     {
@@ -94,6 +102,7 @@ public class WorkersController : ControllerBase
         return Ok(result);
     }
 
+    [AllowAnonymous]
     [HttpGet("by-service/{id:int}")]
     public async Task<IActionResult> GetWorkersByService(int id)
     {

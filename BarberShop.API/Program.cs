@@ -1,6 +1,7 @@
 using BarberShop.API.Extensions;
 using BarberShop.API.Hubs;
 using BarberShop.API.Middleware;
+using BarberShop.API.Services;
 using BarberShop.Application.Interfaces;
 using BarberShop.Application.Services;
 using BarberShop.Application.Validators;
@@ -24,7 +25,6 @@ builder.Services.AddOpenApi();
 builder.Services.AddControllers()
     .AddJsonOptions(o =>
         o.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase);
-builder.Services.AddDirectoryBrowser();
 
 // =========================
 // AutoMapper
@@ -46,7 +46,6 @@ builder.Services.AddSignalR(options =>
 // Swagger
 // =========================
 builder.Services.AddEndpointsApiExplorer();
-//builder.Services.AddSwaggerGen();
 builder.Services.AddSwaggerWithJwt(builder.Configuration);
 
 // =========================
@@ -128,6 +127,7 @@ builder.Services.AddScoped<IWorkersService, WorkersService>();
 builder.Services.AddScoped<IWorkingHoursService, WorkingHoursService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddSingleton<TokenService>();
+builder.Services.AddScoped<INotificationPublisher, SignalRNotificationPublisher>();
 
 // =========================
 // Health Checks
@@ -152,7 +152,8 @@ builder.Services.AddMemoryCache();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
 
-//Fluent Validation
+// FluentValidation — validators are registered for manual use in service layer.
+// Controllers already validate ModelState explicitly via if (!ModelState.IsValid).
 builder.Services.AddValidatorsFromAssemblyContaining<LoginValidator>();
 
 // =========================
@@ -165,17 +166,12 @@ app.UseForwardedHeaders(new ForwardedHeadersOptions
     ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
 });
 
+app.UseHttpsRedirection();
 app.UseRouting();
 app.UseExceptionHandler();
 app.MapPrometheusScrapingEndpoint();
 app.UseCors("FrontendPolicy");
 app.UseStaticFiles();
-
-//app.UseSwagger();
-//app.UseSwaggerUI();
-app.UseSwaggerWithJwt();
-app.UseAuthentication();
-app.UseAuthorization();
 
 app.UseSwaggerWithJwt();
 if (app.Environment.IsDevelopment())
@@ -183,15 +179,14 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 }
 
-app.UseHttpsRedirection();
+app.UseAuthentication();
+app.UseAuthorization();
 
 // =========================
 // Health Check Endpoints
 // =========================
-
 app.MapHealthChecks("/health");
 
-// Endpoint
 app.MapHealthChecks("/health/detail", new HealthCheckOptions
 {
     ResponseWriter = async (context, report) =>
@@ -231,7 +226,6 @@ catch (ReflectionTypeLoadException ex)
     throw;
 }
 
-//Hubs
 app.MapHub<WorkersHub>("/workersHub").RequireCors("FrontendPolicy");
 app.MapHub<ServicesHub>("/servicesHub").RequireCors("FrontendPolicy");
 app.MapHub<CustomersHub>("/customersHub").RequireCors("FrontendPolicy");

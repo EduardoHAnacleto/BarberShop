@@ -1,11 +1,13 @@
 ﻿using BarberShop.Application.Common;
 using BarberShop.Application.DTOs;
 using BarberShop.Application.Interfaces;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BarberShop.API.Controllers;
 
 [ApiController]
+[Authorize(Roles = "Admin")]
 [Route("api/customers")]
 public class CustomersController : ControllerBase
 {

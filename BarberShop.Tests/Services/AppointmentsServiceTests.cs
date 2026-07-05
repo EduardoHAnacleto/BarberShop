@@ -1,15 +1,11 @@
 ﻿using AutoMapper;
-using BarberShop.API.Hubs;
 using BarberShop.Application.DTOs;
 using BarberShop.Application.Interfaces;
 using BarberShop.Application.Services;
 using BarberShop.Domain.Models;
-using BarberShop.Infrastructure.Services;
 using FluentAssertions;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
-using StackExchange.Redis;
 
 namespace BarberShop.Tests.Services;
 
@@ -20,7 +16,8 @@ public class AppointmentsServiceTests
     // =========================
     private readonly Mock<IUnitOfWork> _uow;
     private readonly Mock<IAppointmentRepository> _appointmentRepo;
-    private readonly Mock<IHubContext<AppointmentsHub>> _hub;
+    private readonly Mock<IRedisService> _redis;
+    private readonly Mock<INotificationPublisher> _notifications;
     private readonly IMapper _mapper;
     private readonly AppointmentsService _sut;
 
@@ -32,16 +29,20 @@ public class AppointmentsServiceTests
         _uow.Setup(u => u.Appointments).Returns(_appointmentRepo.Object);
         _uow.Setup(u => u.SaveAsync()).ReturnsAsync(1);
 
-        _hub = new Mock<IHubContext<AppointmentsHub>>();
-        var mockClients = new Mock<IHubClients>();
-        var mockClient = new Mock<IClientProxy>();
-        _hub.Setup(h => h.Clients).Returns(mockClients.Object);
-        mockClients.Setup(c => c.All).Returns(mockClient.Object);
-        mockClient
-            .Setup(c => c.SendCoreAsync(
-                It.IsAny<string>(),
-                It.IsAny<object[]>(),
-                It.IsAny<CancellationToken>()))
+        _redis = new Mock<IRedisService>();
+        _redis.Setup(r => r.GetAsync<List<AppointmentResponseDTO>>(It.IsAny<string>()))
+            .ReturnsAsync((List<AppointmentResponseDTO>?)null);
+        _redis.Setup(r => r.GetAsync<AppointmentResponseDTO>(It.IsAny<string>()))
+            .ReturnsAsync((AppointmentResponseDTO?)null);
+        _redis.Setup(r => r.SetAsync(It.IsAny<string>(), It.IsAny<List<AppointmentResponseDTO>>(), It.IsAny<TimeSpan?>()))
+            .Returns(Task.CompletedTask);
+        _redis.Setup(r => r.SetAsync(It.IsAny<string>(), It.IsAny<AppointmentResponseDTO>(), It.IsAny<TimeSpan?>()))
+            .Returns(Task.CompletedTask);
+        _redis.Setup(r => r.InvalidateByPrefixAsync(It.IsAny<string>()))
+            .Returns(Task.CompletedTask);
+
+        _notifications = new Mock<INotificationPublisher>();
+        _notifications.Setup(n => n.PublishAsync(It.IsAny<string>(), It.IsAny<string>()))
             .Returns(Task.CompletedTask);
 
         _mapper = new MapperConfiguration(cfg =>
@@ -49,64 +50,7 @@ public class AppointmentsServiceTests
             cfg.AddProfile<MappingProfile>();
         }, NullLoggerFactory.Instance).CreateMapper();
 
-        _sut = new AppointmentsService(_uow.Object, _mapper, BuildRedis(), _hub.Object, NullLogger<AppointmentsService>.Instance);
-    }
-
-    private static RedisService BuildRedis()
-    {
-        var multiplexer = new Mock<IConnectionMultiplexer>();
-        var database = new Mock<IDatabase>();
-        var server = new Mock<IServer>();
-
-        database
-            .Setup(d => d.StringGetAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<CommandFlags>()))
-            .ReturnsAsync(RedisValue.Null);
-
-        database
-            .Setup(d => d.StringSetAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<RedisValue>(),
-                It.IsAny<TimeSpan?>(),
-                It.IsAny<bool>(),
-                It.IsAny<When>(),
-                It.IsAny<CommandFlags>()))
-            .ReturnsAsync(true);
-
-        database
-            .Setup(d => d.KeyDeleteAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<CommandFlags>()))
-            .ReturnsAsync(true);
-
-        multiplexer
-            .Setup(m => m.GetEndPoints(It.IsAny<bool>()))
-            .Returns([new System.Net.DnsEndPoint("localhost", 6379)]);
-
-        multiplexer
-            .Setup(m => m.GetServer(
-                It.IsAny<System.Net.EndPoint>(),
-                It.IsAny<object>()))
-            .Returns(server.Object);
-
-        server
-            .Setup(s => s.Keys(
-                It.IsAny<int>(),
-                It.IsAny<RedisValue>(),
-                It.IsAny<int>(),
-                It.IsAny<long>(),
-                It.IsAny<int>(),
-                It.IsAny<CommandFlags>()))
-            .Returns([]);
-
-        multiplexer
-            .Setup(m => m.GetDatabase(
-                It.IsAny<int>(),
-                It.IsAny<object>()))
-            .Returns(database.Object);
-
-        return new RedisService(multiplexer.Object);
+        _sut = new AppointmentsService(_uow.Object, _mapper, _redis.Object, _notifications.Object, NullLogger<AppointmentsService>.Instance);
     }
 
     // =========================
@@ -712,19 +656,19 @@ public class AppointmentsServiceTests
                 It.IsAny<System.Linq.Expressions.Expression<Func<Appointment, object>>[]>()))
             .ReturnsAsync(entity2);
 
-        _appointmentRepo
-            .Setup(r => r.VirtualDelete(It.IsAny<Appointment>()))
-            .Returns(Task.CompletedTask);
-
         // Act
         var result = await _sut.CancelAppointments([1, 2]);
 
         // Assert
         result.Success.Should().BeTrue();
         result.Data.Should().HaveCount(2);
+        result.Data![0].Status.Should().Be(Status.Cancelled);
+        result.Data![1].Status.Should().Be(Status.Cancelled);
 
         _appointmentRepo.Verify(r =>
-            r.VirtualDelete(It.IsAny<Appointment>()),
+            r.Update(
+                It.Is<Appointment>(a => a.Status == Status.Cancelled),
+                It.IsAny<System.Linq.Expressions.Expression<Func<Appointment, object>>[]>()),
             Times.Exactly(2));
 
         _uow.Verify(u => u.SaveAsync(), Times.Once);
@@ -746,19 +690,18 @@ public class AppointmentsServiceTests
                 It.IsAny<System.Linq.Expressions.Expression<Func<Appointment, object>>[]>()))
             .ReturnsAsync((Appointment?)null);
 
-        _appointmentRepo
-            .Setup(r => r.VirtualDelete(It.IsAny<Appointment>()))
-            .Returns(Task.CompletedTask);
-
         // Act
         var result = await _sut.CancelAppointments([1, 99]);
 
         // Assert
         result.Success.Should().BeTrue();
         result.Data.Should().HaveCount(1);
+        result.Data![0].Status.Should().Be(Status.Cancelled);
 
         _appointmentRepo.Verify(r =>
-            r.VirtualDelete(It.IsAny<Appointment>()),
+            r.Update(
+                It.Is<Appointment>(a => a.Status == Status.Cancelled),
+                It.IsAny<System.Linq.Expressions.Expression<Func<Appointment, object>>[]>()),
             Times.Once);
 
         _uow.Verify(u => u.SaveAsync(), Times.Once);

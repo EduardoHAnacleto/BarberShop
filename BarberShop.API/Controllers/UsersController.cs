@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace BarberShop.API.Controllers;
 
 [ApiController]
+[Authorize(Roles = "Admin")]
 [Route("users")]
 public class UsersController : ControllerBase
 {

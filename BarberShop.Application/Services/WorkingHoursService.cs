@@ -114,16 +114,24 @@ public class WorkingHoursService : IWorkingHoursService
         return closures;
     }
 
-    public async Task<Result<WorkingHours>> AddClosureAsync(WorkingHours closure)
+    public async Task<Result<WorkingHours>> AddClosureAsync(ClosureDTO dto)
     {
         using var span = _activitySource.StartActivity("AddClosure");
-        span?.SetTag("closure.reason", closure.Reason);
-        span?.SetTag("closure.type", closure.ClosureType.ToString());
-        span?.SetTag("closure.from", closure.ClosedFrom.ToString("o"));
+        span?.SetTag("closure.reason", dto.Reason);
+        span?.SetTag("closure.type", dto.ClosureType.ToString());
+        span?.SetTag("closure.from", dto.ClosedFrom.ToString("o"));
 
         _logger.LogInformation(
             "Adding closure from {ClosedFrom} — reason: {Reason}",
-            closure.ClosedFrom, closure.Reason);
+            dto.ClosedFrom, dto.Reason);
+
+        if (dto.ClosureType == ClosureType.UntilSpecificDate && !dto.ClosedUntil.HasValue)
+        {
+            _logger.LogWarning("AddClosure failed — ClosedUntil is required for UntilSpecificDate closure");
+            return Result<WorkingHours>.Fail("ClosedUntil is required when ClosureType is UntilSpecificDate.");
+        }
+
+        var closure = _mapper.Map<WorkingHours>(dto);
 
         await _uow.WorkingHours.AddAsync(closure);
         await _uow.SaveAsync();
@@ -222,25 +230,37 @@ public class WorkingHoursService : IWorkingHoursService
         {
             var effectiveUntil = await GetEffectiveClosedUntil(closure);
 
-            if (dateTime >= closure.ClosedFrom && dateTime <= effectiveUntil)
+            if (effectiveUntil.HasValue && dateTime >= closure.ClosedFrom && dateTime <= effectiveUntil.Value)
                 return true;
         }
 
         return false;
     }
 
-    private async Task<DateTime> GetEffectiveClosedUntil(WorkingHours closure)
+    private async Task<DateTime?> GetEffectiveClosedUntil(WorkingHours closure)
     {
-        return closure.ClosureType switch
+        switch (closure.ClosureType)
         {
-            ClosureType.UntilSpecificDate => closure.ClosedUntil
-                ?? throw new Exception("ClosedUntil must be provided for UntilSpecificDate"),
+            case ClosureType.UntilSpecificDate:
+                return closure.ClosedUntil;
 
-            ClosureType.UntilNextOpening => await GetNextOpeningAsync(closure.ClosedFrom)
-                ?? throw new Exception("No next opening found"),
+            case ClosureType.UntilNextOpening:
+                var nextOpening = await GetNextOpeningAsync(closure.ClosedFrom);
+                if (nextOpening is null)
+                {
+                    _logger.LogWarning(
+                        "Closure {ClosureId} (UntilNextOpening) found no opening in the next 7 days — treating as indefinitely closed",
+                        closure.Id);
+                    return DateTime.MaxValue;
+                }
+                return nextOpening;
 
-            _ => throw new Exception("Invalid closure type")
-        };
+            default:
+                _logger.LogWarning(
+                    "Closure {ClosureId} has unrecognized ClosureType {ClosureType} — closure will be ignored",
+                    closure.Id, (int)closure.ClosureType);
+                return null;
+        }
     }
 
     private async Task<DateTime?> GetNextOpeningAsync(DateTime from)

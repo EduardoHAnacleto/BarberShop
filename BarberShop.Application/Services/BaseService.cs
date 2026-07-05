@@ -1,15 +1,16 @@
-﻿using BarberShop.Application.Interfaces;
-using Microsoft.AspNetCore.SignalR;
+using BarberShop.Application.Interfaces;
 
 namespace BarberShop.Application.Services;
 
 public abstract class BaseService
 {
     protected readonly IRedisService _redis;
+    protected readonly INotificationPublisher _notifications;
 
-    protected BaseService(IRedisService redis)
+    protected BaseService(IRedisService redis, INotificationPublisher notifications)
     {
         _redis = redis;
+        _notifications = notifications;
     }
 
     protected async Task<T?> GetCachedAsync<T>(
@@ -29,13 +30,9 @@ public abstract class BaseService
         return data;
     }
 
-    protected async Task InvalidateAndNotifyAsync<THub>(
-        string cachePrefix,
-        IHubContext<THub> hub,
-        string eventName)
-        where THub : Hub
+    protected async Task InvalidateAndNotifyAsync(string cachePrefix, string eventName)
     {
         await _redis.InvalidateByPrefixAsync(cachePrefix);
-        await hub.Clients.All.SendAsync(eventName);
+        await _notifications.PublishAsync(cachePrefix, eventName);
     }
 }

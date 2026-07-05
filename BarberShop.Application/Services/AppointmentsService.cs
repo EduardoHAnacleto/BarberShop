@@ -1,10 +1,8 @@
 ﻿using AutoMapper;
-using BarberShop.API.Hubs;
 using BarberShop.Application.Common;
 using BarberShop.Application.DTOs;
 using BarberShop.Application.Interfaces;
 using BarberShop.Domain.Models;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
@@ -48,19 +46,17 @@ public class AppointmentsService : BaseService, IAppointmentsService
     // =========================
     private readonly IUnitOfWork _uow;
     private readonly IMapper _mapper;
-    private readonly IHubContext<AppointmentsHub> _hub;
     private readonly ILogger<AppointmentsService> _logger;
 
     public AppointmentsService(
         IUnitOfWork uow,
         IMapper mapper,
         IRedisService redis,
-        IHubContext<AppointmentsHub> hub,
-        ILogger<AppointmentsService> logger) : base(redis)
+        INotificationPublisher notifications,
+        ILogger<AppointmentsService> logger) : base(redis, notifications)
     {
         _uow = uow;
         _mapper = mapper;
-        _hub = hub;
         _logger = logger;
     }
 
@@ -177,7 +173,7 @@ public class AppointmentsService : BaseService, IAppointmentsService
 
         await _uow.Appointments.AddAsync(entity);
         await _uow.SaveAsync();
-        await InvalidateAndNotifyAsync("appointments", _hub, "AppointmentsChanged");
+        await InvalidateAndNotifyAsync("appointments", "AppointmentsChanged");
 
         stopwatch.Stop();
 
@@ -230,7 +226,7 @@ public class AppointmentsService : BaseService, IAppointmentsService
 
         _uow.Appointments.Update(entity);
         await _uow.SaveAsync();
-        await InvalidateAndNotifyAsync("appointments", _hub, "AppointmentsChanged");
+        await InvalidateAndNotifyAsync("appointments", "AppointmentsChanged");
 
         stopwatch.Stop();
 
@@ -283,7 +279,7 @@ public class AppointmentsService : BaseService, IAppointmentsService
 
         await _uow.Appointments.VirtualDelete(entity);
         await _uow.SaveAsync();
-        await InvalidateAndNotifyAsync("appointments", _hub, "AppointmentsChanged");
+        await InvalidateAndNotifyAsync("appointments", "AppointmentsChanged");
 
         _appointmentsCancelled.Add(1,
             new TagList
@@ -407,29 +403,26 @@ public class AppointmentsService : BaseService, IAppointmentsService
         if (time <= TimeSpan.Zero)
             return Result<List<AppointmentResponseDTO>>.Fail("Delay time must be greater than zero");
 
-        var tasks = idList.Select(async id =>
+        var results = new List<AppointmentResponseDTO?>();
+        foreach (var id in idList)
         {
             var entity = await _uow.Appointments.GetByIdAsync(id);
 
             if (entity == null)
             {
                 _logger.LogWarning("Appointment {AppointmentId} not found for delay", id);
-                return null;
+                continue;
             }
 
             entity.ScheduledFor = entity.ScheduledFor.Add(time);
             entity.LastUpdatedAt = DateTime.UtcNow;
             _uow.Appointments.Update(entity);
 
-            return _mapper.Map<AppointmentResponseDTO>(entity);
-        });
-
-        var results = (await Task.WhenAll(tasks))
-            .Where(x => x != null)
-            .ToList();
+            results.Add(_mapper.Map<AppointmentResponseDTO>(entity));
+        }
 
         await _uow.SaveAsync();
-        await InvalidateAndNotifyAsync("appointments", _hub, "AppointmentsChanged");
+        await InvalidateAndNotifyAsync("appointments", "AppointmentsChanged");
 
         _appointmentsDelayed.Add(results.Count,
             new TagList { { "delay.minutes", time.TotalMinutes } });
@@ -454,7 +447,8 @@ public class AppointmentsService : BaseService, IAppointmentsService
         if (idList == null || idList.Count == 0)
             return Result<List<AppointmentResponseDTO>>.Fail("No appointments provided");
 
-        var tasks = idList.Select(async id =>
+        var results = new List<AppointmentResponseDTO?>();
+        foreach (var id in idList)
         {
             var entity = await _uow.Appointments.GetByIdAsync(id);
 
@@ -462,20 +456,25 @@ public class AppointmentsService : BaseService, IAppointmentsService
             {
                 _logger.LogWarning(
                     "Appointment {AppointmentId} not found for batch cancel", id);
-                return null;
+                continue;
             }
 
-            await _uow.Appointments.VirtualDelete(entity);
+            if (entity.Status == Status.Cancelled || entity.Status == Status.Completed)
+            {
+                _logger.LogWarning(
+                    "Appointment {AppointmentId} skipped in batch cancel — status is {Status}",
+                    id, entity.Status);
+                continue;
+            }
 
-            return _mapper.Map<AppointmentResponseDTO>(entity);
-        });
-
-        var results = (await Task.WhenAll(tasks))
-            .Where(x => x != null)
-            .ToList();
+            entity.Status = Status.Cancelled;
+            entity.CompletedAt = DateTime.UtcNow;
+            _uow.Appointments.Update(entity);
+            results.Add(_mapper.Map<AppointmentResponseDTO>(entity));
+        }
 
         await _uow.SaveAsync();
-        await InvalidateAndNotifyAsync("appointments", _hub, "AppointmentsChanged");
+        await InvalidateAndNotifyAsync("appointments", "AppointmentsChanged");
 
         _appointmentsCancelled.Add(results.Count,
             new TagList { { "source", "batch" } });

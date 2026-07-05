@@ -62,17 +62,17 @@ public class AppointmentRepository : GenericRepository<Appointment>, IAppointmen
             .Include(p => p.Worker)
             .Include(p => p.Service)
             .Where(a => a.Status == status)
-            .OrderByDescending(a => a.Status)
+            .OrderByDescending(a => a.ScheduledFor)
             .ToListAsync();
         return appointments;
     }
 
-    public async Task VirtualDelete(Appointment obj)
+    public Task VirtualDelete(Appointment obj)
     {
         obj.Status = Status.Deleted;
         obj.CompletedAt = DateTime.UtcNow;
         _context.Appointments.Update(obj);
-        return;
+        return Task.CompletedTask;
     }
 
     public async Task<List<Appointment>> VirtualDeleteRange(List<Appointment> appointments)

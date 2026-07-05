@@ -1,10 +1,8 @@
 ﻿using AutoMapper;
-using BarberShop.API.Hubs;
 using BarberShop.Application.Common;
 using BarberShop.Application.DTOs;
 using BarberShop.Application.Interfaces;
 using BarberShop.Domain.Models;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
@@ -43,19 +41,17 @@ public class WorkersService : BaseService, IWorkersService
     // =========================
     private readonly IUnitOfWork _uow;
     private readonly IMapper _mapper;
-    private readonly IHubContext<WorkersHub> _hub;
     private readonly ILogger<WorkersService> _logger;
 
     public WorkersService(
         IUnitOfWork uow,
         IMapper mapper,
         IRedisService redis,
-        IHubContext<WorkersHub> hub,
-        ILogger<WorkersService> logger) : base(redis)
+        INotificationPublisher notifications,
+        ILogger<WorkersService> logger) : base(redis, notifications)
     {
         _uow = uow;
         _mapper = mapper;
-        _hub = hub;
         _logger = logger;
     }
 
@@ -157,7 +153,7 @@ public class WorkersService : BaseService, IWorkersService
             "Creating worker {WorkerName} with wage {WagePerHour}",
             dto.Name, dto.WagePerHour);
 
-        if (string.IsNullOrWhiteSpace(dto.Name) || dto.Name.Length < 10)
+        if (string.IsNullOrWhiteSpace(dto.Name) || dto.Name.Length < 6)
         {
             _logger.LogWarning(
                 "Worker creation failed — invalid name: {WorkerName}", dto.Name);
@@ -186,7 +182,7 @@ public class WorkersService : BaseService, IWorkersService
 
         await _uow.Workers.AddAsync(worker);
         await _uow.SaveAsync();
-        await InvalidateAndNotifyAsync("workers", _hub, "WorkersChanged");
+        await InvalidateAndNotifyAsync("workers", "WorkersChanged");
 
         stopwatch.Stop();
 
@@ -246,7 +242,7 @@ public class WorkersService : BaseService, IWorkersService
         }
 
         await _uow.SaveAsync();
-        await InvalidateAndNotifyAsync("workers", _hub, "WorkersChanged");
+        await InvalidateAndNotifyAsync("workers", "WorkersChanged");
 
         stopwatch.Stop();
 
@@ -281,7 +277,7 @@ public class WorkersService : BaseService, IWorkersService
 
         _uow.Workers.Delete(worker);
         await _uow.SaveAsync();
-        await InvalidateAndNotifyAsync("workers", _hub, "WorkersChanged");
+        await InvalidateAndNotifyAsync("workers", "WorkersChanged");
 
         _workersDeleted.Add(1);
 

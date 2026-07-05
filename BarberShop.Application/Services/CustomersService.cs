@@ -1,10 +1,8 @@
-﻿using AutoMapper;
-using BarberShop.API.Hubs;
+using AutoMapper;
 using BarberShop.Application.Common;
 using BarberShop.Application.DTOs;
 using BarberShop.Application.Interfaces;
 using BarberShop.Domain.Models;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
@@ -43,19 +41,17 @@ public class CustomersService : BaseService, ICustomersService
     // =========================
     private readonly IUnitOfWork _uow;
     private readonly IMapper _mapper;
-    private readonly IHubContext<CustomersHub> _hub;
     private readonly ILogger<CustomersService> _logger;
 
     public CustomersService(
         IUnitOfWork uow,
         IMapper mapper,
         IRedisService redis,
-        IHubContext<CustomersHub> hub,
-        ILogger<CustomersService> logger) : base(redis)
+        INotificationPublisher notifications,
+        ILogger<CustomersService> logger) : base(redis, notifications)
     {
         _uow = uow;
         _mapper = mapper;
-        _hub = hub;
         _logger = logger;
     }
 
@@ -159,7 +155,7 @@ public class CustomersService : BaseService, ICustomersService
 
         await _uow.Customers.AddAsync(customer);
         await _uow.SaveAsync();
-        await InvalidateAndNotifyAsync("customers", _hub, "CustomersChanged");
+        await InvalidateAndNotifyAsync("customers", "CustomersChanged");
 
         stopwatch.Stop();
 
@@ -201,7 +197,7 @@ public class CustomersService : BaseService, ICustomersService
 
         _uow.Customers.Update(customer);
         await _uow.SaveAsync();
-        await InvalidateAndNotifyAsync("customers", _hub, "CustomersChanged");
+        await InvalidateAndNotifyAsync("customers", "CustomersChanged");
 
         stopwatch.Stop();
 
@@ -236,7 +232,7 @@ public class CustomersService : BaseService, ICustomersService
 
         _uow.Customers.Delete(customer);
         await _uow.SaveAsync();
-        await InvalidateAndNotifyAsync("customers", _hub, "CustomersChanged");
+        await InvalidateAndNotifyAsync("customers", "CustomersChanged");
 
         _customersDeleted.Add(1);
 

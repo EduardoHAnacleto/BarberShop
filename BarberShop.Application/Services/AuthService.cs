@@ -1,4 +1,4 @@
-﻿using BarberShop.Application.Common;
+using BarberShop.Application.Common;
 using BarberShop.Application.DTOs;
 using BarberShop.Application.Interfaces;
 using BarberShop.Domain.Enums;
@@ -73,16 +73,22 @@ public class AuthService : IAuthService
     public async Task<Result<AuthResponseDTO>> LoginAsync(LoginDTO dto)
     {
         using var span = _activitySource.StartActivity("Login");
-        span?.SetTag("user.email", dto.Email);
 
-        _logger.LogInformation("Login attempt for {Email}", dto.Email);
+        if (string.IsNullOrWhiteSpace(dto.Email) || string.IsNullOrWhiteSpace(dto.Password))
+            return Result<AuthResponseDTO>.Fail("Invalid credentials");
 
-        var user = await _uow.Users.GetByEmailAsync(dto.Email);
+        // Normalize so "Joao@X.com" and "joao@x.com" resolve to the same account.
+        var email = dto.Email.Trim().ToLowerInvariant();
+        span?.SetTag("user.email", email);
+
+        _logger.LogInformation("Login attempt for {Email}", email);
+
+        var user = await _uow.Users.GetByEmailAsync(email);
 
         if (user == null || !user.IsActive)
         {
             _loginFailed.Add(1, new TagList { { "reason", "user_not_found_or_inactive" } });
-            _logger.LogWarning("Login failed — user not found or inactive: {Email}", dto.Email);
+            _logger.LogWarning("Login failed — user not found or inactive: {Email}", email);
             return Result<AuthResponseDTO>.Fail("Invalid credentials");
         }
 
@@ -91,7 +97,7 @@ public class AuthService : IAuthService
             _loginFailed.Add(1, new TagList { { "reason", "account_locked" } });
             _logger.LogWarning(
                 "Login failed — account locked until {LockoutEnd}: {Email}",
-                user.LockoutEnd, dto.Email);
+                user.LockoutEnd, email);
             return Result<AuthResponseDTO>.Fail("Account is locked");
         }
 
@@ -105,7 +111,7 @@ public class AuthService : IAuthService
                 _accountsLocked.Add(1);
                 _logger.LogWarning(
                     "Account locked after {Attempts} failed attempts: {Email}",
-                    user.FailedLoginAttempts, dto.Email);
+                    user.FailedLoginAttempts, email);
             }
 
             _uow.Users.Update(user);
@@ -114,7 +120,7 @@ public class AuthService : IAuthService
             _loginFailed.Add(1, new TagList { { "reason", "wrong_password" } });
             _logger.LogWarning(
                 "Login failed — wrong password for {Email} (attempt {Attempts})",
-                dto.Email, user.FailedLoginAttempts);
+                email, user.FailedLoginAttempts);
 
             return Result<AuthResponseDTO>.Fail("Invalid credentials");
         }
@@ -134,7 +140,7 @@ public class AuthService : IAuthService
 
         _logger.LogInformation(
             "Login successful for {Email} (UserId {UserId}, Role {Role})",
-            dto.Email, user.Id, user.UserRole);
+            email, user.Id, user.UserRole);
         return Result<AuthResponseDTO>.Ok(new AuthResponseDTO
         {
             Token = token,
@@ -156,22 +162,21 @@ public class AuthService : IAuthService
 
         try
         {
-            // When a Google client ID is configured, validate the audience claim
-            // against it so tokens issued for another app cannot authenticate here.
-            // Without it, ValidateAsync still verifies signature + issuer + expiry.
             var googleClientId = _config["Google:ClientId"];
-            if (!string.IsNullOrWhiteSpace(googleClientId))
+
+            // ClientId must be configured to prevent confused-deputy attacks
+            // (tokens issued for another Google app would otherwise be accepted).
+            if (string.IsNullOrWhiteSpace(googleClientId))
             {
-                var settings = new GoogleJsonWebSignature.ValidationSettings
-                {
-                    Audience = new[] { googleClientId }
-                };
-                payload = await GoogleJsonWebSignature.ValidateAsync(dto.IdToken, settings);
+                _logger.LogError("Google:ClientId is not configured");
+                return Result<AuthResponseDTO>.Fail("Google login is not configured");
             }
-            else
+
+            var settings = new GoogleJsonWebSignature.ValidationSettings
             {
-                payload = await GoogleJsonWebSignature.ValidateAsync(dto.IdToken);
-            }
+                Audience = new[] { googleClientId }
+            };
+            payload = await GoogleJsonWebSignature.ValidateAsync(dto.IdToken, settings);
         }
         catch (Exception ex)
         {
@@ -184,64 +189,90 @@ public class AuthService : IAuthService
             return Result<AuthResponseDTO>.Fail("Invalid Google token");
         }
 
-        span?.SetTag("user.email", payload.Email);
+        // Only accept Google accounts with a verified email to prevent
+        // account takeover via unverified email impersonation.
+        if (!payload.EmailVerified)
+        {
+            _loginFailed.Add(1, new TagList { { "reason", "email_not_verified" } });
+            _logger.LogWarning(
+                "Google login failed — email not verified: {Email}", payload.Email);
+            return Result<AuthResponseDTO>.Fail("Google account email is not verified");
+        }
 
-        var user = await _uow.Users.GetByEmailAsync(payload.Email);
+        var email = payload.Email.Trim().ToLowerInvariant();
+        span?.SetTag("user.email", email);
+
+        var user = await _uow.Users.GetByEmailAsync(email);
 
         if (user == null)
         {
-            // First-time Google sign-in: create a linked Customer record so the
-            // booking flow can reuse it (same shape as the manual register flow).
-            // Falls back to the email local part when Google does not return a name.
-            var customerName = !string.IsNullOrWhiteSpace(payload.Name)
-                ? payload.Name
-                : payload.Email.Split('@')[0];
-
-            var customer = new Customer
+            // Check IsActive-equivalent: new Google users are created active.
+            // First-time Google sign-in: create Customer + User in a single transaction
+            // so a failed second SaveAsync does not leave an orphan Customer record.
+            await _uow.BeginTransactionAsync();
+            try
             {
-                Name = customerName,
-                Email = payload.Email,
-                PhoneNumber = string.Empty,
-            };
-            await _uow.Customers.AddAsync(customer);
-            await _uow.SaveAsync();
+                var customerName = !string.IsNullOrWhiteSpace(payload.Name)
+                    ? payload.Name
+                    : email.Split('@')[0];
 
-            user = new User
+                var customer = new Customer
+                {
+                    Name = customerName,
+                    Email = email,
+                    PhoneNumber = string.Empty,
+                };
+                await _uow.Customers.AddAsync(customer);
+                await _uow.SaveAsync();
+
+                user = new User
+                {
+                    Email = email,
+                    GoogleId = payload.Subject,
+                    UserRole = UserRoles.Client,
+                    IsActive = true,
+                    PasswordHash = string.Empty,
+                    CustomerId = customer.Id,
+                };
+
+                await _uow.Users.AddAsync(user);
+                await _uow.SaveAsync();
+                await _uow.CommitAsync();
+
+                _logger.LogInformation(
+                    "New user created via Google login: {Email} (CustomerId {CustomerId})",
+                    email, customer.Id);
+            }
+            catch (Exception ex)
             {
-                Email = payload.Email,
-                GoogleId = payload.Subject,
-                UserRole = UserRoles.Client,
-                IsActive = true,
-                PasswordHash = string.Empty,
-                CustomerId = customer.Id,
-            };
-
-            await _uow.Users.AddAsync(user);
-            await _uow.SaveAsync();
-
-            _logger.LogInformation(
-                "New user created via Google login: {Email} (CustomerId {CustomerId})",
-                payload.Email, customer.Id);
+                await _uow.RollbackAsync();
+                _logger.LogError(ex, "Google registration failed for {Email}", email);
+                return Result<AuthResponseDTO>.Fail("Registration failed. Please try again.");
+            }
         }
-        else if (string.IsNullOrEmpty(user.GoogleId))
+        else
         {
-            // Existing email/password account signing in with Google for the first
-            // time — link the Google identity so future Google sign-ins resolve
-            // to the same record.
-            user.GoogleId = payload.Subject;
-            _uow.Users.Update(user);
-            await _uow.SaveAsync();
+            // Check IsActive before linking or generating a token.
+            if (!user.IsActive)
+            {
+                _loginFailed.Add(1, new TagList { { "reason", "account_inactive" } });
+                _logger.LogWarning(
+                    "Google login failed — account inactive: {Email}", email);
+                return Result<AuthResponseDTO>.Fail("Account is inactive");
+            }
 
-            _logger.LogInformation(
-                "Existing user {Email} linked to Google id", payload.Email);
-        }
+            if (string.IsNullOrEmpty(user.GoogleId))
+            {
+                // Existing email/password account signing in with Google for the first
+                // time — link the Google identity so future Google sign-ins resolve
+                // to the same record.
+                user.GoogleId = payload.Subject;
+                _uow.Users.Update(user);
+                await _uow.SaveAsync();
 
-        if (!user.IsActive)
-        {
-            _loginFailed.Add(1, new TagList { { "reason", "account_inactive" } });
-            _logger.LogWarning(
-                "Google login failed — account inactive: {Email}", payload.Email);
-            return Result<AuthResponseDTO>.Fail("Account is inactive");
+                _logger.LogInformation(
+                    "Existing user {Email} linked to Google id", email);
+            }
         }
 
         var token = _token.GenerateToken(user, dto.RememberMe);
@@ -251,7 +282,7 @@ public class AuthService : IAuthService
 
         _logger.LogInformation(
             "Google login successful for {Email} (UserId {UserId})",
-            payload.Email, user.Id);
+            email, user.Id);
 
         return Result<AuthResponseDTO>.Ok(new AuthResponseDTO
         {
@@ -267,26 +298,41 @@ public class AuthService : IAuthService
     public async Task<Result<AuthResponseDTO>> RegisterAsync(RegisterDTO dto)
     {
         using var span = _activitySource.StartActivity("Register");
-        span?.SetTag("user.email", dto.Email);
 
-        _logger.LogInformation("Client registration attempt for {Email}", dto.Email);
+        if (string.IsNullOrWhiteSpace(dto.Name))
+            return Result<AuthResponseDTO>.Fail("Name is required.");
+
+        if (string.IsNullOrWhiteSpace(dto.Email))
+            return Result<AuthResponseDTO>.Fail("Email is required.");
+
+        if (string.IsNullOrWhiteSpace(dto.Password))
+            return Result<AuthResponseDTO>.Fail("Password is required.");
+
+        if (string.IsNullOrWhiteSpace(dto.PhoneNumber))
+            return Result<AuthResponseDTO>.Fail("Phone number is required.");
+
+        var email = dto.Email.Trim().ToLowerInvariant();
+        span?.SetTag("user.email", email);
+
+        _logger.LogInformation("Client registration attempt for {Email}", email);
 
         // Enforce unique email — the Users table has no DB-level unique constraint
         // so we check explicitly to return a friendly error instead of a 500.
-        var existing = await _uow.Users.GetByEmailAsync(dto.Email);
+        var existing = await _uow.Users.GetByEmailAsync(email);
         if (existing != null)
         {
-            _logger.LogWarning("Registration failed — email already in use: {Email}", dto.Email);
+            _logger.LogWarning("Registration failed — email already in use: {Email}", email);
             return Result<AuthResponseDTO>.Fail("This email is already registered.");
         }
 
+        await _uow.BeginTransactionAsync();
         try
         {
             // Create the customer profile first so we can link it to the user.
             var customer = new Customer
             {
                 Name = dto.Name.Trim(),
-                Email = dto.Email.Trim().ToLowerInvariant(),
+                Email = email,
                 PhoneNumber = dto.PhoneNumber.Trim(),
                 DateOfBirth = dto.DateOfBirth,
             };
@@ -296,7 +342,7 @@ public class AuthService : IAuthService
             // Create the user account with a hashed password and Client role.
             var user = new User
             {
-                Email = dto.Email.Trim().ToLowerInvariant(),
+                Email = email,
                 PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password),
                 UserRole = UserRoles.Client,
                 IsActive = true,
@@ -304,13 +350,14 @@ public class AuthService : IAuthService
             };
             await _uow.Users.AddAsync(user);
             await _uow.SaveAsync();
+            await _uow.CommitAsync();
 
             var token = _token.GenerateToken(user);
 
             _loginSuccess.Add(1, new TagList { { "user.role", user.UserRole.ToString() } });
             _logger.LogInformation(
                 "Client registered successfully: {Email} (UserId {UserId})",
-                dto.Email, user.Id);
+                email, user.Id);
 
             return Result<AuthResponseDTO>.Ok(new AuthResponseDTO
             {
@@ -321,8 +368,9 @@ public class AuthService : IAuthService
         }
         catch (Exception ex)
         {
+            await _uow.RollbackAsync();
             span?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            _logger.LogError(ex, "Registration failed for {Email}", dto.Email);
+            _logger.LogError(ex, "Registration failed for {Email}", email);
             return Result<AuthResponseDTO>.Fail("Registration failed. Please try again.");
         }
     }

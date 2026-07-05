@@ -2,11 +2,13 @@
 using BarberShop.Application.DTOs;
 using BarberShop.Application.Interfaces;
 using BarberShop.Domain.Models;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BarberShop.API.Controllers;
 
 [ApiController]
+[Authorize]
 [Route("api/appointments")]
 public class AppointmentsController : ControllerBase
 {
