@@ -135,6 +135,10 @@ BEGIN
         [UserGoogleId]            NVARCHAR(200)  NULL,
         [UserCustomerId]          INT            NULL,
         [UserWorkerId]            INT            NULL,
+        [UserSecurityStamp]       NVARCHAR(64)   NOT NULL
+            CONSTRAINT [DF_Users_SecurityStamp] DEFAULT (CONVERT(NVARCHAR(64), NEWID())),
+        [UserPasswordResetToken]           NVARCHAR(128) NULL,
+        [UserPasswordResetTokenExpiresAt]  DATETIME2     NULL,
 
         CONSTRAINT [PK_Users] PRIMARY KEY ([UserId]),
 
@@ -144,6 +148,32 @@ BEGIN
         CONSTRAINT [FK_Users_Workers] FOREIGN KEY ([UserWorkerId])
             REFERENCES [dbo].[Workers] ([WorkerId])
     );
+END
+GO
+
+-- Migration: add UserSecurityStamp to databases created before JWT revocation
+-- support. NEWID() default backfills a unique stamp for every existing user.
+IF COL_LENGTH('dbo.Users', 'UserSecurityStamp') IS NULL
+BEGIN
+    ALTER TABLE [dbo].[Users]
+        ADD [UserSecurityStamp] NVARCHAR(64) NOT NULL
+            CONSTRAINT [DF_Users_SecurityStamp] DEFAULT (CONVERT(NVARCHAR(64), NEWID()));
+END
+GO
+
+-- Migration: add forgot-password token columns to databases created before
+-- the reset-password feature.
+IF COL_LENGTH('dbo.Users', 'UserPasswordResetToken') IS NULL
+BEGIN
+    ALTER TABLE [dbo].[Users]
+        ADD [UserPasswordResetToken] NVARCHAR(128) NULL;
+END
+GO
+
+IF COL_LENGTH('dbo.Users', 'UserPasswordResetTokenExpiresAt') IS NULL
+BEGIN
+    ALTER TABLE [dbo].[Users]
+        ADD [UserPasswordResetTokenExpiresAt] DATETIME2 NULL;
 END
 GO
 
@@ -164,6 +194,9 @@ BEGIN
         [AppointmentExtraDetails] NVARCHAR(500)  NOT NULL DEFAULT '',
         [CreatedAt]               DATETIME2      NOT NULL DEFAULT GETUTCDATE(),
         [LastUpdatedAt]           DATETIME2      NULL,
+        [AppointmentRecurrenceId] UNIQUEIDENTIFIER NULL,
+        [AppointmentReminder24hSentAt] DATETIME2 NULL,
+        [AppointmentReminder1hSentAt]  DATETIME2 NULL,
 
         CONSTRAINT [PK_Appointments] PRIMARY KEY ([AppointmentId]),
 
@@ -176,6 +209,31 @@ BEGIN
         CONSTRAINT [FK_Appointments_Services] FOREIGN KEY ([AppointmentServiceId])
             REFERENCES [dbo].[Services] ([ServiceId])
     );
+END
+GO
+
+-- Migration: add AppointmentRecurrenceId to databases created before the
+-- recurring-booking feature.
+IF COL_LENGTH('dbo.Appointments', 'AppointmentRecurrenceId') IS NULL
+BEGIN
+    ALTER TABLE [dbo].[Appointments]
+        ADD [AppointmentRecurrenceId] UNIQUEIDENTIFIER NULL;
+END
+GO
+
+-- Migration: add reminder-sent tracking columns to databases created before
+-- the appointment-reminder feature.
+IF COL_LENGTH('dbo.Appointments', 'AppointmentReminder24hSentAt') IS NULL
+BEGIN
+    ALTER TABLE [dbo].[Appointments]
+        ADD [AppointmentReminder24hSentAt] DATETIME2 NULL;
+END
+GO
+
+IF COL_LENGTH('dbo.Appointments', 'AppointmentReminder1hSentAt') IS NULL
+BEGIN
+    ALTER TABLE [dbo].[Appointments]
+        ADD [AppointmentReminder1hSentAt] DATETIME2 NULL;
 END
 GO
 
@@ -219,6 +277,38 @@ END
 GO
 
 -- =============================================
+-- Reviews
+-- =============================================
+IF NOT EXISTS (SELECT * FROM sys.objects
+    WHERE object_id = OBJECT_ID(N'[dbo].[Reviews]') AND type = 'U')
+BEGIN
+    CREATE TABLE [dbo].[Reviews] (
+        [ReviewId]            INT            NOT NULL IDENTITY(1,1),
+        [ReviewAppointmentId] INT            NOT NULL,
+        [ReviewCustomerId]    INT            NOT NULL,
+        [ReviewWorkerId]      INT            NOT NULL,
+        [ReviewRating]        INT            NOT NULL,
+        [ReviewComment]       NVARCHAR(1000) NOT NULL DEFAULT '',
+        [CreatedAt]           DATETIME2      NOT NULL DEFAULT GETUTCDATE(),
+
+        CONSTRAINT [PK_Reviews] PRIMARY KEY ([ReviewId]),
+
+        CONSTRAINT [FK_Reviews_Appointments] FOREIGN KEY ([ReviewAppointmentId])
+            REFERENCES [dbo].[Appointments] ([AppointmentId]) ON DELETE CASCADE,
+
+        CONSTRAINT [FK_Reviews_Customers] FOREIGN KEY ([ReviewCustomerId])
+            REFERENCES [dbo].[Customers] ([CustomerId]),
+
+        CONSTRAINT [FK_Reviews_Workers] FOREIGN KEY ([ReviewWorkerId])
+            REFERENCES [dbo].[Workers] ([WorkerId]),
+
+        -- One review per appointment.
+        CONSTRAINT [UQ_Reviews_AppointmentId] UNIQUE ([ReviewAppointmentId])
+    );
+END
+GO
+
+-- =============================================
 -- Indexes
 -- =============================================
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Users_Email')
@@ -239,6 +329,11 @@ GO
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Appointments_ScheduledFor')
     CREATE INDEX [IX_Appointments_ScheduledFor]
         ON [dbo].[Appointments] ([AppointmentScheduledFor]);
+GO
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Reviews_WorkerId')
+    CREATE INDEX [IX_Reviews_WorkerId]
+        ON [dbo].[Reviews] ([ReviewWorkerId]);
 GO
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Appointments_Status')

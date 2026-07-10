@@ -1,7 +1,9 @@
+using BarberShop.Application.Interfaces;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using Swashbuckle.AspNetCore.SwaggerUI;
+using System.Security.Claims;
 using System.Text;
 
 namespace BarberShop.API.Extensions;
@@ -33,6 +35,34 @@ public static class SwaggerExtensions
                     ValidAudience = jwt["Audience"],
                     IssuerSigningKey = new SymmetricSecurityKey(
                         Encoding.UTF8.GetBytes(jwt["Key"]!))
+                };
+
+                // Tokens are long-lived; real session lifetime is enforced here.
+                // Every authenticated request checks the token's "stamp" claim
+                // against the user's current SecurityStamp (Redis-cached), so
+                // logout / password change / email change revoke old tokens.
+                options.Events = new JwtBearerEvents
+                {
+                    OnTokenValidated = async context =>
+                    {
+                        var principal = context.Principal;
+
+                        var sub = principal?.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                            ?? principal?.FindFirst("sub")?.Value;
+                        var stamp = principal?.FindFirst("stamp")?.Value;
+
+                        if (!int.TryParse(sub, out var userId))
+                        {
+                            context.Fail("Token has no valid subject.");
+                            return;
+                        }
+
+                        var stamps = context.HttpContext.RequestServices
+                            .GetRequiredService<ISecurityStampService>();
+
+                        if (!await stamps.ValidateAsync(userId, stamp))
+                            context.Fail("Token has been revoked.");
+                    }
                 };
             });
 

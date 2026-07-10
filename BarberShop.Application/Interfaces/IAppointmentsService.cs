@@ -11,7 +11,9 @@ public interface IAppointmentsService
     Task<AppointmentResponseDTO?> GetByIdAsync(int id);
 
     Task<Result<AppointmentResponseDTO>> Create(AppointmentRequestDTO dto);
+    Task<Result<RecurringAppointmentResultDTO>> CreateRecurring(RecurringAppointmentRequestDTO dto);
     Task<Result<AppointmentResponseDTO>> Update(int id, AppointmentRequestDTO dto);
+    Task<Result<AppointmentResponseDTO>> ChangeStatus(int id, Status status);
     Task<Result<AppointmentResponseDTO>> Delete(int id);
 
     Task<List<AppointmentResponseDTO>> GetByDateRange(DateTime start, DateTime end);

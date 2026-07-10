@@ -15,5 +15,12 @@ public class Appointment
     public string ExtraDetails { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? LastUpdatedAt { get; set; } = DateTime.UtcNow;
+    /// <summary>Shared by every occurrence of a recurring booking; null for one-off appointments.</summary>
+    public Guid? RecurrenceId { get; set; }
+
+    // Set once each reminder email goes out, so the background sweep never
+    // sends the same reminder twice.
+    public DateTime? Reminder24hSentAt { get; set; }
+    public DateTime? Reminder1hSentAt { get; set; }
 
 }

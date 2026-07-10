@@ -169,6 +169,17 @@ public class AppointmentsService : BaseService, IAppointmentsService
             "Creating appointment for CustomerId {CustomerId} with WorkerId {WorkerId} on {ScheduledFor}",
             dto.CustomerId, dto.WorkerId, dto.ScheduledFor);
 
+        // Server-side conflict guard: even though the booking UI only offers
+        // free slots, two clients can race for the same one. Reject overlaps
+        // for the same worker so the double-booking never reaches the database.
+        if (await HasConflictAsync(dto.WorkerId, dto.ServiceId, dto.ScheduledFor))
+        {
+            _logger.LogWarning(
+                "Appointment creation rejected — slot taken for WorkerId {WorkerId} at {ScheduledFor}",
+                dto.WorkerId, dto.ScheduledFor);
+            return Result<AppointmentResponseDTO>.Fail("This time slot is no longer available");
+        }
+
         var entity = _mapper.Map<Appointment>(dto);
 
         await _uow.Appointments.AddAsync(entity);
@@ -196,6 +207,125 @@ public class AppointmentsService : BaseService, IAppointmentsService
     }
 
     // =========================
+    // CREATE RECURRING
+    // =========================
+    // Books up to RepeatWeeks occurrences 7 days apart under one RecurrenceId.
+    // Each occurrence is validated independently against HasConflictAsync —
+    // weekly spacing means occurrences can never overlap each other, only a
+    // pre-existing booking — so a conflicting week is skipped rather than
+    // failing the whole series.
+    public async Task<Result<RecurringAppointmentResultDTO>> CreateRecurring(RecurringAppointmentRequestDTO dto)
+    {
+        using var span = _activitySource.StartActivity("CreateRecurringAppointments");
+        span?.SetTag("appointment.workerId", dto.WorkerId);
+        span?.SetTag("appointment.repeatWeeks", dto.RepeatWeeks);
+
+        if (dto.RepeatWeeks < 1 || dto.RepeatWeeks > 12)
+            return Result<RecurringAppointmentResultDTO>.Fail("RepeatWeeks must be between 1 and 12");
+
+        // Resolved once up front: needed to validate the ids are real and to
+        // attach to every occurrence so the response mapping (WorkerName /
+        // CustomerName / ServiceName) doesn't depend on EF change-tracker
+        // fixup picking them up by accident.
+        var worker = await _uow.Workers.GetByIdAsync(dto.WorkerId);
+        if (worker == null)
+            return Result<RecurringAppointmentResultDTO>.Fail("Worker not found");
+
+        var customer = await _uow.Customers.GetByIdAsync(dto.CustomerId);
+        if (customer == null)
+            return Result<RecurringAppointmentResultDTO>.Fail("Customer not found");
+
+        var service = await _uow.Services.GetByIdAsync(dto.ServiceId);
+        if (service == null)
+            return Result<RecurringAppointmentResultDTO>.Fail("Service not found");
+
+        var recurrenceId = Guid.NewGuid();
+        var toCreate = new List<Appointment>();
+        var skipped = new List<DateTime>();
+
+        for (var i = 0; i < dto.RepeatWeeks; i++)
+        {
+            var occurrenceDate = dto.ScheduledFor.AddDays(7 * i);
+
+            if (await HasConflictAsync(dto.WorkerId, dto.ServiceId, occurrenceDate))
+            {
+                skipped.Add(occurrenceDate);
+                continue;
+            }
+
+            toCreate.Add(new Appointment
+            {
+                WorkerId = dto.WorkerId,
+                Worker = worker,
+                CustomerId = dto.CustomerId,
+                Customer = customer,
+                ServiceId = dto.ServiceId,
+                Service = service,
+                ScheduledFor = occurrenceDate,
+                Status = Status.Scheduled,
+                ExtraDetails = dto.ExtraDetails,
+                RecurrenceId = recurrenceId,
+            });
+        }
+
+        if (toCreate.Count == 0)
+        {
+            _logger.LogWarning(
+                "Recurring appointment creation rejected — every occurrence conflicted for WorkerId {WorkerId}",
+                dto.WorkerId);
+            return Result<RecurringAppointmentResultDTO>.Fail("All occurrences conflict with existing appointments");
+        }
+
+        foreach (var entity in toCreate)
+            await _uow.Appointments.AddAsync(entity);
+
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("appointments", "AppointmentsChanged");
+
+        _appointmentsCreated.Add(toCreate.Count,
+            new TagList
+            {
+                { "worker.id",  dto.WorkerId  },
+                { "service.id", dto.ServiceId },
+                { "recurring",  true          },
+            });
+
+        _logger.LogInformation(
+            "Recurring series {RecurrenceId} created {Created}/{Requested} occurrences for WorkerId {WorkerId}",
+            recurrenceId, toCreate.Count, dto.RepeatWeeks, dto.WorkerId);
+
+        return Result<RecurringAppointmentResultDTO>.Ok(new RecurringAppointmentResultDTO
+        {
+            RecurrenceId = recurrenceId,
+            Created = _mapper.Map<List<AppointmentResponseDTO>>(toCreate),
+            SkippedDates = skipped,
+        });
+    }
+
+    // Returns true when a proposed booking for [scheduledFor, +serviceDuration)
+    // overlaps any active (Scheduled/OnGoing) appointment of the same worker.
+    // excludeAppointmentId lets an update ignore the row being edited.
+    private async Task<bool> HasConflictAsync(
+        int workerId, int serviceId, DateTime scheduledFor, int? excludeAppointmentId = null)
+    {
+        var service = await _uow.Services.GetByIdAsync(serviceId);
+        if (service == null)
+            return false; // Missing service is validated elsewhere.
+
+        var proposedStart = scheduledFor;
+        var proposedEnd = scheduledFor.AddMinutes(service.Duration);
+
+        var existing = await _uow.Appointments.GetByWorker(workerId) ?? [];
+
+        // Two half-open intervals [a,b) and [c,d) overlap iff a < d && c < b.
+        return existing.Any(a =>
+            a.Id != excludeAppointmentId &&
+            a.Status is Status.Scheduled or Status.OnGoing &&
+            proposedStart < a.ScheduledFor.AddMinutes(a.Service?.Duration ?? service.Duration) &&
+            a.ScheduledFor < proposedEnd);
+    }
+
+    // =========================
     // UPDATE
     // =========================
     public async Task<Result<AppointmentResponseDTO>> Update(int id, AppointmentRequestDTO dto)
@@ -218,6 +348,18 @@ public class AppointmentsService : BaseService, IAppointmentsService
             return Result<AppointmentResponseDTO>.Ok(null);
         }
 
+        // A reschedule (changed date/time) must not collide with another of the
+        // worker's active bookings. Exclude this appointment so its own current
+        // slot never counts as a conflict against itself.
+        if (dto.ScheduledFor != entity.ScheduledFor &&
+            await HasConflictAsync(dto.WorkerId, dto.ServiceId, dto.ScheduledFor, id))
+        {
+            _logger.LogWarning(
+                "Appointment {AppointmentId} reschedule rejected — slot taken at {ScheduledFor}",
+                id, dto.ScheduledFor);
+            return Result<AppointmentResponseDTO>.Fail("This time slot is no longer available");
+        }
+
         var previousStatus = entity.Status;
         _mapper.Map(dto, entity);
 
@@ -237,6 +379,41 @@ public class AppointmentsService : BaseService, IAppointmentsService
         _logger.LogInformation(
             "Appointment {AppointmentId} updated from {PreviousStatus} to {NewStatus} in {ElapsedMs}ms",
             id, previousStatus, dto.Status, stopwatch.Elapsed.TotalMilliseconds);
+
+        return Result<AppointmentResponseDTO>.Ok(_mapper.Map<AppointmentResponseDTO>(entity));
+    }
+
+    // =========================
+    // CHANGE STATUS
+    // =========================
+    // Focused status transition for the worker portal (start / complete /
+    // no-show) without requiring the full appointment payload. Completing an
+    // appointment stamps CompletedAt once.
+    public async Task<Result<AppointmentResponseDTO>> ChangeStatus(int id, Status status)
+    {
+        using var span = _activitySource.StartActivity("ChangeAppointmentStatus");
+        span?.SetTag("appointment.id", id);
+        span?.SetTag("appointment.newStatus", status.ToString());
+
+        var entity = await _uow.Appointments.GetByIdAsync(id);
+
+        if (entity == null)
+        {
+            _logger.LogWarning("Appointment {AppointmentId} not found for status change", id);
+            return Result<AppointmentResponseDTO>.Ok(null);
+        }
+
+        entity.Status = status;
+
+        if (status == Status.Completed && entity.CompletedAt == null)
+            entity.CompletedAt = DateTime.UtcNow;
+
+        _uow.Appointments.Update(entity);
+        await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("appointments", "AppointmentsChanged");
+
+        _logger.LogInformation(
+            "Appointment {AppointmentId} status changed to {Status}", id, status);
 
         return Result<AppointmentResponseDTO>.Ok(_mapper.Map<AppointmentResponseDTO>(entity));
     }

@@ -16,4 +16,5 @@ public class AppointmentResponseDTO
     public DateTime? CompletedAt { get; set; }
     public string ExtraDetails { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; }
+    public Guid? RecurrenceId { get; set; }
 }

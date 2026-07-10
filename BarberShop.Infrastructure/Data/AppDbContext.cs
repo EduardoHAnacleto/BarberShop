@@ -13,6 +13,7 @@ public class AppDbContext : DbContext
     public DbSet<Worker> Workers { get; set; }
     public DbSet<User> Users { get; set; }
     public DbSet<BusinessSchedule> BusinessSchedules { get; set; }
+    public DbSet<Review> Reviews { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -107,6 +108,9 @@ public class AppDbContext : DbContext
             entity.Property(e => e.ScheduledFor).HasColumnName("AppointmentScheduledFor");
             entity.Property(e => e.ExtraDetails).HasColumnName("AppointmentExtraDetails");
             entity.Property(e => e.CompletedAt).HasColumnName("AppointmentCompletedAt");
+            entity.Property(e => e.RecurrenceId).HasColumnName("AppointmentRecurrenceId");
+            entity.Property(e => e.Reminder24hSentAt).HasColumnName("AppointmentReminder24hSentAt");
+            entity.Property(e => e.Reminder1hSentAt).HasColumnName("AppointmentReminder1hSentAt");
 
             entity.HasOne(e => e.Customer)
                   .WithMany()
@@ -138,6 +142,9 @@ public class AppDbContext : DbContext
             entity.Property(e => e.PasswordHash).HasColumnName("UserPasswordHash");
             entity.Property(e => e.IsActive).HasColumnName("UserIsActive");
             entity.Property(e => e.LockoutEnd).HasColumnName("UserLockoutEnd");
+            entity.Property(e => e.SecurityStamp).HasColumnName("UserSecurityStamp");
+            entity.Property(e => e.PasswordResetToken).HasColumnName("UserPasswordResetToken");
+            entity.Property(e => e.PasswordResetTokenExpiresAt).HasColumnName("UserPasswordResetTokenExpiresAt");
         });
 
         modelBuilder.Entity<WorkingHours>(entity =>
@@ -148,6 +155,37 @@ public class AppDbContext : DbContext
             entity.Property(e => e.ClosedFrom).HasColumnName("HolidayClosedFrom");
             entity.Property(e => e.ClosedUntil).HasColumnName("HolidayClosedUntil");
             entity.Property(e => e.Reason).HasColumnName("HolidayReason");
+        });
+
+        modelBuilder.Entity<Review>(entity =>
+        {
+            entity.ToTable("Reviews");
+
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("ReviewId");
+            entity.Property(e => e.AppointmentId).HasColumnName("ReviewAppointmentId");
+            entity.Property(e => e.CustomerId).HasColumnName("ReviewCustomerId");
+            entity.Property(e => e.WorkerId).HasColumnName("ReviewWorkerId");
+            entity.Property(e => e.Rating).HasColumnName("ReviewRating");
+            entity.Property(e => e.Comment).HasColumnName("ReviewComment");
+
+            // One review per appointment — enforced at the DB level, not just
+            // in the service layer, so a race between two requests cannot
+            // slip a duplicate through.
+            entity.HasIndex(e => e.AppointmentId).IsUnique();
+
+            entity.HasOne(e => e.Appointment)
+                  .WithMany()
+                  .HasForeignKey(e => e.AppointmentId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Customer)
+                  .WithMany()
+                  .HasForeignKey(e => e.CustomerId)
+                  .OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne(e => e.Worker)
+                  .WithMany()
+                  .HasForeignKey(e => e.WorkerId)
+                  .OnDelete(DeleteBehavior.NoAction);
         });
     }
 }

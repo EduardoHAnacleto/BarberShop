@@ -9,10 +9,15 @@ namespace BarberShop.Application.Services;
 
 public class TokenService
 {
+    // Tokens are long-lived by design: real session lifetime is governed by
+    // the SecurityStamp claim, which is validated on every request and rotated
+    // on logout / password change / email change. The far-future exp exists
+    // only because JWT validation requires one.
+    private const int TokenLifetimeDays = 365;
+
     private readonly SymmetricSecurityKey _key;
     private readonly string _issuer;
     private readonly string _audience;
-    private readonly int _expiresInMinutes;
 
     public TokenService(IConfiguration config)
     {
@@ -28,16 +33,10 @@ public class TokenService
         _audience = config["Jwt:Audience"]
             ?? throw new InvalidOperationException("Jwt:Audience is not configured.");
 
-        var expiresRaw = config["Jwt:ExpiresInMinutes"]
-            ?? throw new InvalidOperationException("Jwt:ExpiresInMinutes is not configured.");
-
-        if (!int.TryParse(expiresRaw, out _expiresInMinutes) || _expiresInMinutes <= 0)
-            throw new InvalidOperationException("Jwt:ExpiresInMinutes must be a positive integer.");
-
         _key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
     }
 
-    public string GenerateToken(User user, bool rememberMe = false)
+    public string GenerateToken(User user)
     {
         var creds = new SigningCredentials(_key, SecurityAlgorithms.HmacSha256);
 
@@ -46,20 +45,16 @@ public class TokenService
             new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
             new Claim(JwtRegisteredClaimNames.Email, user.Email),
             new Claim(ClaimTypes.Role, user.UserRole.ToString()),
+            // Revocation token: must match the user's current SecurityStamp,
+            // checked in OnTokenValidated on every authenticated request.
+            new Claim("stamp", user.SecurityStamp),
         };
-
-        // "Remember me" extends token life to 30 days so the user stays signed
-        // in across browser restarts. Default uses the short Jwt:ExpiresInMinutes
-        // for ordinary sessions.
-        var expires = rememberMe
-            ? DateTime.UtcNow.AddDays(30)
-            : DateTime.UtcNow.AddMinutes(_expiresInMinutes);
 
         var token = new JwtSecurityToken(
             issuer: _issuer,
             audience: _audience,
             claims: claims,
-            expires: expires,
+            expires: DateTime.UtcNow.AddDays(TokenLifetimeDays),
             signingCredentials: creds
         );
 

@@ -54,17 +54,23 @@ public class AuthService : IAuthService
     private readonly TokenService _token;
     private readonly ILogger<AuthService> _logger;
     private readonly IConfiguration _config;
+    private readonly ISecurityStampService _stamps;
+    private readonly IEmailService _email;
 
     public AuthService(
         IUnitOfWork uow,
         TokenService token,
         ILogger<AuthService> logger,
-        IConfiguration config)
+        IConfiguration config,
+        ISecurityStampService stamps,
+        IEmailService email)
     {
         _uow = uow;
         _token = token;
         _logger = logger;
         _config = config;
+        _stamps = stamps;
+        _email = email;
     }
 
     // =========================
@@ -130,9 +136,10 @@ public class AuthService : IAuthService
         _uow.Users.Update(user);
         await _uow.SaveAsync();
 
-        // RememberMe extends the JWT lifetime so the cookie can stay signed in
-        // across browser restarts without re-authenticating.
-        var token = _token.GenerateToken(user, dto.RememberMe);
+        // Tokens are long-lived and revoked via SecurityStamp rotation on
+        // logout / credential change. RememberMe only affects how long the
+        // frontend persists the cookie.
+        var token = _token.GenerateToken(user);
 
         _loginSuccess.Add(1, new TagList { { "user.role", user.UserRole.ToString() } });
         span?.SetTag("user.id", user.Id);
@@ -275,7 +282,7 @@ public class AuthService : IAuthService
             }
         }
 
-        var token = _token.GenerateToken(user, dto.RememberMe);
+        var token = _token.GenerateToken(user);
 
         _googleLogins.Add(1);
         span?.SetTag("user.id", user.Id);
@@ -373,6 +380,167 @@ public class AuthService : IAuthService
             _logger.LogError(ex, "Registration failed for {Email}", email);
             return Result<AuthResponseDTO>.Fail("Registration failed. Please try again.");
         }
+    }
+
+    // =========================
+    // LOGOUT
+    // =========================
+    // Rotates the user's SecurityStamp so every previously issued JWT stops
+    // validating immediately. Tokens are long-lived by design; this is the
+    // server-side "kill switch" the stamp claim exists for.
+    public async Task<Result<bool>> LogoutAsync(int userId)
+    {
+        using var span = _activitySource.StartActivity("Logout");
+        span?.SetTag("user.id", userId);
+
+        var user = await _uow.Users.GetByIdAsync(userId);
+
+        if (user == null)
+        {
+            _logger.LogWarning("Logout failed — user {UserId} not found", userId);
+            return Result<bool>.Ok(false);
+        }
+
+        user.SecurityStamp = Guid.NewGuid().ToString("N");
+        _uow.Users.Update(user);
+        await _uow.SaveAsync();
+
+        // Drop the cached stamp so revocation takes effect on the next request.
+        await _stamps.InvalidateCacheAsync(userId);
+
+        _logger.LogInformation("User {UserId} logged out — tokens revoked", userId);
+
+        return Result<bool>.Ok(true);
+    }
+
+    // =========================
+    // CHANGE PASSWORD
+    // =========================
+    // Verifies the current password, stores a new BCrypt hash and rotates the
+    // SecurityStamp so every other session (and the current token) is revoked
+    // — the user re-authenticates with the new password.
+    public async Task<Result<bool>> ChangePasswordAsync(
+        int userId, string currentPassword, string newPassword)
+    {
+        using var span = _activitySource.StartActivity("ChangePassword");
+        span?.SetTag("user.id", userId);
+
+        if (string.IsNullOrWhiteSpace(newPassword) || newPassword.Length < 8)
+            return Result<bool>.Fail("New password must be at least 8 characters");
+
+        var user = await _uow.Users.GetByIdAsync(userId);
+        if (user == null)
+            return Result<bool>.Fail("User not found");
+
+        if (!BCrypt.Net.BCrypt.Verify(currentPassword, user.PasswordHash))
+        {
+            _logger.LogWarning(
+                "Change password failed — wrong current password for UserId {UserId}", userId);
+            return Result<bool>.Fail("Current password is incorrect");
+        }
+
+        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(newPassword);
+        user.SecurityStamp = Guid.NewGuid().ToString("N");
+        _uow.Users.Update(user);
+        await _uow.SaveAsync();
+
+        await _stamps.InvalidateCacheAsync(userId);
+
+        _logger.LogInformation(
+            "Password changed for UserId {UserId} — sessions revoked", userId);
+
+        return Result<bool>.Ok(true);
+    }
+
+    // =========================
+    // FORGOT PASSWORD
+    // =========================
+    // Never reveals whether the email is registered — the same generic
+    // response goes out from the controller regardless of what happens here.
+    // A found account gets a single-use token (1h) and a reset email.
+    public async Task ForgotPasswordAsync(string email)
+    {
+        using var span = _activitySource.StartActivity("ForgotPassword");
+
+        var normalized = email.Trim().ToLowerInvariant();
+        var user = await _uow.Users.GetByEmailAsync(normalized);
+
+        if (user == null || !user.IsActive)
+        {
+            _logger.LogInformation(
+                "Forgot-password requested for {Email} — no active account, no email sent", normalized);
+            return;
+        }
+
+        var token = GenerateResetToken();
+        user.PasswordResetToken = token;
+        user.PasswordResetTokenExpiresAt = DateTime.UtcNow.AddHours(1);
+        _uow.Users.Update(user);
+        await _uow.SaveAsync();
+
+        var frontendBaseUrl = _config["Frontend:BaseUrl"] ?? "http://localhost:3000";
+        var resetLink = $"{frontendBaseUrl}/reset-password?token={Uri.EscapeDataString(token)}";
+
+        await _email.SendAsync(
+            user.Email,
+            user.Email,
+            "Reset your BarberShop password",
+            $"""
+            <p>We received a request to reset your BarberShop password.</p>
+            <p><a href="{resetLink}">Click here to choose a new password</a>. This link expires in 1 hour.</p>
+            <p>If you did not request this, you can safely ignore this email.</p>
+            """);
+
+        _logger.LogInformation("Password reset token issued for UserId {UserId}", user.Id);
+    }
+
+    // =========================
+    // RESET PASSWORD
+    // =========================
+    public async Task<Result<bool>> ResetPasswordAsync(string token, string newPassword)
+    {
+        using var span = _activitySource.StartActivity("ResetPassword");
+
+        if (string.IsNullOrWhiteSpace(newPassword) || newPassword.Length < 8)
+            return Result<bool>.Fail("New password must be at least 8 characters");
+
+        if (string.IsNullOrWhiteSpace(token))
+            return Result<bool>.Fail("Invalid or expired reset link");
+
+        var users = await _uow.Users.GetAllAsync(u => u.PasswordResetToken == token);
+        var user = users.SingleOrDefault();
+
+        if (user == null || user.PasswordResetTokenExpiresAt is null
+            || user.PasswordResetTokenExpiresAt < DateTime.UtcNow)
+        {
+            _logger.LogWarning("Reset-password failed — invalid or expired token");
+            return Result<bool>.Fail("Invalid or expired reset link");
+        }
+
+        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(newPassword);
+        user.PasswordResetToken = null;
+        user.PasswordResetTokenExpiresAt = null;
+        user.SecurityStamp = Guid.NewGuid().ToString("N");
+        _uow.Users.Update(user);
+        await _uow.SaveAsync();
+
+        await _stamps.InvalidateCacheAsync(user.Id);
+
+        _logger.LogInformation(
+            "Password reset via token for UserId {UserId} — sessions revoked", user.Id);
+
+        return Result<bool>.Ok(true);
+    }
+
+    // Cryptographically random, URL-safe token — not the JWT/BCrypt libraries
+    // already in use, so a dedicated generator instead of overloading either.
+    private static string GenerateResetToken()
+    {
+        var bytes = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+        return Convert.ToBase64String(bytes)
+            .Replace("+", "-")
+            .Replace("/", "_")
+            .Replace("=", "");
     }
 
     // =========================

@@ -221,6 +221,24 @@ public class WorkingHoursService : IWorkingHoursService
         return true;
     }
 
+    public async Task<List<(DateTime From, DateTime Until)>> GetEffectiveClosuresAsync(
+        DateTime windowStart, DateTime windowEnd)
+    {
+        var closures = await _uow.WorkingHours.GetAllAsync(w => w.ClosedFrom <= windowEnd);
+
+        var intervals = new List<(DateTime, DateTime)>();
+
+        foreach (var closure in closures)
+        {
+            var effectiveUntil = await GetEffectiveClosedUntil(closure);
+
+            if (effectiveUntil.HasValue && effectiveUntil.Value >= windowStart)
+                intervals.Add((closure.ClosedFrom, effectiveUntil.Value));
+        }
+
+        return intervals;
+    }
+
     private async Task<bool> IsInClosurePeriod(DateTime dateTime)
     {
         var closures = await _uow.WorkingHours.GetAllAsync(

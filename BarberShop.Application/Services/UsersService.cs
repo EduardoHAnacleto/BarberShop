@@ -42,17 +42,20 @@ public class UsersService : BaseService, IUsersService
     private readonly IUnitOfWork _uow;
     private readonly IMapper _mapper;
     private readonly ILogger<UsersService> _logger;
+    private readonly ISecurityStampService _stamps;
 
     public UsersService(
         IUnitOfWork uow,
         IMapper mapper,
         IRedisService redis,
         INotificationPublisher notifications,
-        ILogger<UsersService> logger) : base(redis, notifications)
+        ILogger<UsersService> logger,
+        ISecurityStampService stamps) : base(redis, notifications)
     {
         _uow = uow;
         _mapper = mapper;
         _logger = logger;
+        _stamps = stamps;
     }
 
     // =========================
@@ -202,10 +205,28 @@ public class UsersService : BaseService, IUsersService
             return Result<UserResponseDTO>.Ok(null);
         }
 
+        // Credential changes must revoke every previously issued JWT: rotate
+        // the SecurityStamp when the login email changes or a new password is
+        // provided (empty PasswordHash means "keep current password").
+        var emailChanged = !string.Equals(
+            user.Email, dto.Email?.Trim(), StringComparison.OrdinalIgnoreCase);
+        var passwordChanged = !string.IsNullOrWhiteSpace(dto.PasswordHash);
+
         _mapper.Map(dto, user);
+
+        if (emailChanged || passwordChanged)
+            user.SecurityStamp = Guid.NewGuid().ToString("N");
 
         _uow.Users.Update(user);
         await _uow.SaveAsync();
+
+        if (emailChanged || passwordChanged)
+        {
+            await _stamps.InvalidateCacheAsync(id);
+            _logger.LogInformation(
+                "User {UserId} credentials changed — tokens revoked", id);
+        }
+
         await InvalidateAndNotifyAsync("users", "UsersChanged");
 
         stopwatch.Stop();

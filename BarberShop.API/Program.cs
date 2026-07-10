@@ -69,6 +69,24 @@ builder.Services.AddObservability(builder.Configuration, redisConnection);
 // =========================
 // CORS
 // =========================
+// Allowed origins come from configuration (Cors:AllowedOrigins) so production
+// domains can be added without a rebuild; the localhost dev origins are the
+// fallback when nothing is configured.
+var allowedOrigins = builder.Configuration
+    .GetSection("Cors:AllowedOrigins")
+    .Get<string[]>();
+
+if (allowedOrigins is null || allowedOrigins.Length == 0)
+{
+    allowedOrigins =
+    [
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
+    ];
+}
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("FrontendPolicy", policy =>
@@ -77,15 +95,37 @@ builder.Services.AddCors(options =>
         // SignalR WebSocket upgrades and authenticated XHR. AllowAnyOrigin
         // is incompatible with AllowCredentials per the CORS spec.
         policy
-            .WithOrigins(
-                "http://localhost:3000",
-                "http://localhost:3001",
-                "http://127.0.0.1:3000",
-                "http://127.0.0.1:3001")
+            .WithOrigins(allowedOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials();
     });
+});
+
+// =========================
+// Rate limiting
+// =========================
+// Protects the auth endpoints from brute-force and from the lockout-DoS where
+// an attacker deliberately trips another user's 5-strike lockout. Keyed by
+// remote IP with a fixed window. This is a secondary (network-level) guard —
+// the primary defense against credential attacks is the per-account lockout
+// (UserFailedLoginAttempts/UserLockoutEnd), which this limit does not affect.
+// 30/min still blocks rapid-fire abuse while comfortably covering a full
+// Playwright E2E run, where every browser project logs in independently from
+// the same IP.
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    options.AddPolicy("auth", httpContext =>
+        System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 30,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            }));
 });
 
 // =========================
@@ -126,6 +166,16 @@ builder.Services.AddScoped<IUsersService, UsersService>();
 builder.Services.AddScoped<IWorkersService, WorkersService>();
 builder.Services.AddScoped<IWorkingHoursService, WorkingHoursService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<ISecurityStampService, SecurityStampService>();
+builder.Services.AddScoped<IAvailabilityService, AvailabilityService>();
+builder.Services.AddScoped<IAppointmentAccessService, AppointmentAccessService>();
+builder.Services.AddScoped<IReviewsService, ReviewsService>();
+builder.Services.AddScoped<ILoyaltyService, LoyaltyService>();
+builder.Services.AddScoped<IReportsService, ReportsService>();
+builder.Services.AddScoped<IEmailService, EmailService>();
+builder.Services.AddScoped<IAppointmentReminderService, AppointmentReminderService>();
+builder.Services.AddHostedService<AppointmentReminderBackgroundService>();
+builder.Services.AddSingleton<IShopClock, ShopClock>();
 builder.Services.AddSingleton<TokenService>();
 builder.Services.AddScoped<INotificationPublisher, SignalRNotificationPublisher>();
 
@@ -172,8 +222,14 @@ app.UseExceptionHandler();
 app.MapPrometheusScrapingEndpoint();
 app.UseCors("FrontendPolicy");
 app.UseStaticFiles();
+app.UseRateLimiter();
 
-app.UseSwaggerWithJwt();
+// Swagger UI is helpful for a portfolio demo, so it stays on by default. Set
+// Swagger:Enabled=false to disable it in a hardened production deployment.
+if (builder.Configuration.GetValue("Swagger:Enabled", true))
+{
+    app.UseSwaggerWithJwt();
+}
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();

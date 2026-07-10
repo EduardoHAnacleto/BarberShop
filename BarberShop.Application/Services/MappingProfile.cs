@@ -41,9 +41,20 @@ namespace BarberShop.Application.Services
             // User
             CreateMap<User, UserRequestDTO>();
             CreateMap<UserRequestDTO, User>()
-                .ForMember(dest => dest.PasswordHash,
-                    opt => opt.MapFrom(src =>
-                        BCrypt.Net.BCrypt.HashPassword(src.PasswordHash)));
+                // The route id is authoritative; mapping the DTO's Id (0 when
+                // omitted by the client) onto a tracked entity would attempt
+                // to modify the EF primary key.
+                .ForMember(dest => dest.Id, opt => opt.Ignore())
+                // Never overwrite the revocation stamp from client input.
+                .ForMember(dest => dest.SecurityStamp, opt => opt.Ignore())
+                .ForMember(dest => dest.PasswordHash, opt =>
+                {
+                    // The admin edit form sends an empty PasswordHash to mean
+                    // "keep the current password" — hashing the empty string
+                    // here would silently lock the user out of their account.
+                    opt.PreCondition(src => !string.IsNullOrWhiteSpace(src.PasswordHash));
+                    opt.MapFrom(src => BCrypt.Net.BCrypt.HashPassword(src.PasswordHash));
+                });
             CreateMap<UserRequestDTO, UserResponseDTO>();
             CreateMap<User, UserResponseDTO>(); 
 
@@ -53,6 +64,12 @@ namespace BarberShop.Application.Services
             // WorkingHours (Closure)
             CreateMap<ClosureDTO, WorkingHours>()
                 .ForMember(dest => dest.Id, opt => opt.Ignore());
+
+            // Review
+            CreateMap<Review, ReviewResponseDTO>()
+                .ForMember(dest => dest.CustomerName, opt => opt.MapFrom(src => src.Customer.Name))
+                .ForMember(dest => dest.WorkerName, opt => opt.MapFrom(src => src.Worker.Name))
+                .ForMember(dest => dest.ServiceName, opt => opt.MapFrom(src => src.Appointment.Service.Name));
         }
     }
 }

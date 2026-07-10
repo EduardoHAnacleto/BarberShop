@@ -11,10 +11,27 @@ namespace BarberShop.API.Controllers;
 public class WorkersController : ControllerBase
 {
     private readonly IWorkersService _workerService;
+    private readonly IAvailabilityService _availabilityService;
 
-    public WorkersController(IWorkersService workerService)
+    public WorkersController(
+        IWorkersService workerService,
+        IAvailabilityService availabilityService)
     {
         _workerService = workerService;
+        _availabilityService = availabilityService;
+    }
+
+    // Bookable "HH:mm" start times for a worker on a day for a given service.
+    // Computed server-side (schedule, break, closures, existing bookings,
+    // service duration fit, same-day lead time) so the booking UI no longer
+    // downloads other customers' appointments to reason about free slots.
+    [AllowAnonymous]
+    [HttpGet("{id:int}/availability")]
+    public async Task<IActionResult> GetAvailability(
+        int id, [FromQuery] DateOnly date, [FromQuery] int serviceId)
+    {
+        var result = await _availabilityService.GetAvailabilityAsync(id, date, serviceId);
+        return result.Success ? Ok(result.Data) : BadRequest(result.Error);
     }
 
     [AllowAnonymous]

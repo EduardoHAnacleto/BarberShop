@@ -3,11 +3,16 @@ using BarberShop.Application.DTOs;
 using BarberShop.Application.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 
 namespace BarberShop.API.Controllers;
 
+// Authorization is per-action: admin management endpoints require the Admin
+// role, while /users/me only requires authentication (clients and workers use
+// it to resolve their own customerId/workerId). Authorize attributes combine
+// additively, so a class-level Roles=Admin could not be relaxed on the action.
 [ApiController]
-[Authorize(Roles = "Admin")]
+[Authorize]
 [Route("users")]
 public class UsersController : ControllerBase
 {
@@ -18,6 +23,26 @@ public class UsersController : ControllerBase
         _usersService = usersService;
     }
 
+    // Resolves the calling user's own record from the JWT subject. Any
+    // authenticated role may call it; it never exposes other accounts.
+    [HttpGet("me")]
+    public async Task<IActionResult> Me()
+    {
+        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)
+            ?? User.FindFirstValue("sub");
+
+        if (!int.TryParse(sub, out var userId))
+            return Unauthorized();
+
+        var result = await _usersService.GetByIdAsync(userId);
+
+        if (result == null)
+            return NotFound();
+
+        return Ok(result);
+    }
+
+    [Authorize(Roles = "Admin")]
     [HttpGet("all")]
     public async Task<IActionResult> GetAll()
     {
@@ -25,10 +50,12 @@ public class UsersController : ControllerBase
         return Ok(result);
     }
 
+    [Authorize(Roles = "Admin")]
     [HttpGet("all/paged")]
     public async Task<IActionResult> GetAllPaged([FromQuery] PaginationParams pagination)
     => Ok(await _usersService.GetAllAsync(pagination));
 
+    [Authorize(Roles = "Admin")]
     [HttpGet("{id:int}")]
     public async Task<IActionResult> GetById(int id)
     {

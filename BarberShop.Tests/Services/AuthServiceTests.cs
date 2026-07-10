@@ -18,6 +18,8 @@ public class AuthServiceTests
     private readonly Mock<IUnitOfWork> _uow;
     private readonly Mock<IUserRepository> _userRepo;
     private readonly Mock<ICustomerRepository> _customerRepo;
+    private readonly Mock<ISecurityStampService> _stamps;
+    private readonly Mock<IEmailService> _emailService;
     private readonly TokenService _tokenService;
     private readonly IConfiguration _config;
     private readonly AuthService _sut;
@@ -35,6 +37,15 @@ public class AuthServiceTests
         _uow.Setup(u => u.CommitAsync()).Returns(Task.CompletedTask);
         _uow.Setup(u => u.RollbackAsync()).Returns(Task.CompletedTask);
 
+        _stamps = new Mock<ISecurityStampService>();
+        _stamps.Setup(s => s.InvalidateCacheAsync(It.IsAny<int>()))
+            .Returns(Task.CompletedTask);
+
+        _emailService = new Mock<IEmailService>();
+        _emailService
+            .Setup(e => e.SendAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
+            .Returns(Task.CompletedTask);
+
         _config = BuildConfig();
         _tokenService = new TokenService(_config);
 
@@ -42,7 +53,9 @@ public class AuthServiceTests
             _uow.Object,
             _tokenService,
             NullLogger<AuthService>.Instance,
-            _config);
+            _config,
+            _stamps.Object,
+            _emailService.Object);
     }
 
     private static IConfiguration BuildConfig(string? googleClientId = null)
@@ -273,6 +286,273 @@ public class AuthServiceTests
     }
 
     // =========================
+    // LOGOUT
+    // =========================
+
+    [Fact]
+    public async Task LogoutAsync_WhenUserExists_RotatesStampAndInvalidatesCache()
+    {
+        // Arrange
+        var user = MakeUser();
+        var originalStamp = user.SecurityStamp;
+
+        _userRepo
+            .Setup(r => r.GetByIdAsync(
+                1,
+                It.IsAny<System.Linq.Expressions.Expression<Func<User, object>>[]>()))
+            .ReturnsAsync(user);
+
+        // Act
+        var result = await _sut.LogoutAsync(1);
+
+        // Assert — a new stamp means every previously issued JWT stops validating.
+        result.Success.Should().BeTrue();
+        result.Data.Should().BeTrue();
+        user.SecurityStamp.Should().NotBe(originalStamp);
+
+        _uow.Verify(u => u.SaveAsync(), Times.Once);
+        _stamps.Verify(s => s.InvalidateCacheAsync(1), Times.Once);
+    }
+
+    // =========================
+    // CHANGE PASSWORD
+    // =========================
+
+    [Fact]
+    public async Task ChangePassword_WithCorrectCurrentPassword_UpdatesHashAndRotatesStamp()
+    {
+        // Arrange
+        var user = MakeUser(password: "OldPass@123");
+        var originalStamp = user.SecurityStamp;
+        var originalHash = user.PasswordHash;
+
+        _userRepo
+            .Setup(r => r.GetByIdAsync(
+                1,
+                It.IsAny<System.Linq.Expressions.Expression<Func<User, object>>[]>()))
+            .ReturnsAsync(user);
+
+        // Act
+        var result = await _sut.ChangePasswordAsync(1, "OldPass@123", "NewPass@456");
+
+        // Assert — new hash verifies, old sessions revoked.
+        result.Success.Should().BeTrue();
+        user.PasswordHash.Should().NotBe(originalHash);
+        BCrypt.Net.BCrypt.Verify("NewPass@456", user.PasswordHash).Should().BeTrue();
+        user.SecurityStamp.Should().NotBe(originalStamp);
+        _stamps.Verify(s => s.InvalidateCacheAsync(1), Times.Once);
+        _uow.Verify(u => u.SaveAsync(), Times.Once);
+    }
+
+    [Fact]
+    public async Task ChangePassword_WithWrongCurrentPassword_Fails()
+    {
+        var user = MakeUser(password: "OldPass@123");
+        _userRepo
+            .Setup(r => r.GetByIdAsync(
+                1,
+                It.IsAny<System.Linq.Expressions.Expression<Func<User, object>>[]>()))
+            .ReturnsAsync(user);
+
+        var result = await _sut.ChangePasswordAsync(1, "WrongPass", "NewPass@456");
+
+        result.Success.Should().BeFalse();
+        result.Error.Should().Be("Current password is incorrect");
+        _uow.Verify(u => u.SaveAsync(), Times.Never);
+        _stamps.Verify(s => s.InvalidateCacheAsync(It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ChangePassword_WithTooShortNewPassword_Fails()
+    {
+        var user = MakeUser(password: "OldPass@123");
+        _userRepo
+            .Setup(r => r.GetByIdAsync(
+                1,
+                It.IsAny<System.Linq.Expressions.Expression<Func<User, object>>[]>()))
+            .ReturnsAsync(user);
+
+        var result = await _sut.ChangePasswordAsync(1, "OldPass@123", "short");
+
+        result.Success.Should().BeFalse();
+        result.Error.Should().Be("New password must be at least 8 characters");
+        _uow.Verify(u => u.SaveAsync(), Times.Never);
+    }
+
+    [Fact]
+    public async Task ChangePassword_WhenUserNotFound_Fails()
+    {
+        _userRepo
+            .Setup(r => r.GetByIdAsync(
+                99,
+                It.IsAny<System.Linq.Expressions.Expression<Func<User, object>>[]>()))
+            .ReturnsAsync((User?)null);
+
+        var result = await _sut.ChangePasswordAsync(99, "any", "NewPass@456");
+
+        result.Success.Should().BeFalse();
+    }
+
+    // =========================
+    // FORGOT / RESET PASSWORD
+    // =========================
+
+    [Fact]
+    public async Task ForgotPasswordAsync_WhenEmailExists_IssuesTokenAndSendsEmail()
+    {
+        var user = MakeUser();
+        _userRepo.Setup(r => r.GetByEmailAsync("john@barbershop.com")).ReturnsAsync(user);
+
+        await _sut.ForgotPasswordAsync("john@barbershop.com");
+
+        user.PasswordResetToken.Should().NotBeNullOrEmpty();
+        user.PasswordResetTokenExpiresAt.Should().NotBeNull();
+        user.PasswordResetTokenExpiresAt.Should().BeCloseTo(DateTime.UtcNow.AddHours(1), TimeSpan.FromMinutes(1));
+        _uow.Verify(u => u.SaveAsync(), Times.Once);
+        _emailService.Verify(e => e.SendAsync(
+            "john@barbershop.com", "john@barbershop.com", It.IsAny<string>(), It.IsAny<string>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ForgotPasswordAsync_WhenEmailDoesNotExist_DoesNotSendEmailOrThrow()
+    {
+        _userRepo.Setup(r => r.GetByEmailAsync("nobody@barbershop.com")).ReturnsAsync((User?)null);
+
+        // Must not reveal (via exception or behavior difference) that the email is unknown.
+        await _sut.ForgotPasswordAsync("nobody@barbershop.com");
+
+        _emailService.Verify(e => e.SendAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()),
+            Times.Never);
+        _uow.Verify(u => u.SaveAsync(), Times.Never);
+    }
+
+    [Fact]
+    public async Task ForgotPasswordAsync_WhenAccountInactive_DoesNotSendEmail()
+    {
+        var user = MakeUser(isActive: false);
+        _userRepo.Setup(r => r.GetByEmailAsync("john@barbershop.com")).ReturnsAsync(user);
+
+        await _sut.ForgotPasswordAsync("john@barbershop.com");
+
+        _emailService.Verify(e => e.SendAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task ResetPasswordAsync_WithValidToken_UpdatesPasswordAndRotatesStamp()
+    {
+        var user = MakeUser();
+        var originalStamp = user.SecurityStamp;
+        user.PasswordResetToken = "valid-token";
+        user.PasswordResetTokenExpiresAt = DateTime.UtcNow.AddMinutes(30);
+
+        _userRepo
+            .Setup(r => r.GetAllAsync(
+                It.IsAny<System.Linq.Expressions.Expression<Func<User, bool>>>(),
+                It.IsAny<Func<IQueryable<User>, IOrderedQueryable<User>>>(),
+                It.IsAny<System.Linq.Expressions.Expression<Func<User, object>>[]>()))
+            .ReturnsAsync([user]);
+
+        var result = await _sut.ResetPasswordAsync("valid-token", "BrandNewPass@1");
+
+        result.Success.Should().BeTrue();
+        BCrypt.Net.BCrypt.Verify("BrandNewPass@1", user.PasswordHash).Should().BeTrue();
+        user.PasswordResetToken.Should().BeNull();
+        user.PasswordResetTokenExpiresAt.Should().BeNull();
+        user.SecurityStamp.Should().NotBe(originalStamp);
+        _stamps.Verify(s => s.InvalidateCacheAsync(user.Id), Times.Once);
+    }
+
+    [Fact]
+    public async Task ResetPasswordAsync_WithExpiredToken_Fails()
+    {
+        var user = MakeUser();
+        user.PasswordResetToken = "expired-token";
+        user.PasswordResetTokenExpiresAt = DateTime.UtcNow.AddMinutes(-5);
+
+        _userRepo
+            .Setup(r => r.GetAllAsync(
+                It.IsAny<System.Linq.Expressions.Expression<Func<User, bool>>>(),
+                It.IsAny<Func<IQueryable<User>, IOrderedQueryable<User>>>(),
+                It.IsAny<System.Linq.Expressions.Expression<Func<User, object>>[]>()))
+            .ReturnsAsync([user]);
+
+        var result = await _sut.ResetPasswordAsync("expired-token", "BrandNewPass@1");
+
+        result.Success.Should().BeFalse();
+        result.Error.Should().Be("Invalid or expired reset link");
+        _uow.Verify(u => u.SaveAsync(), Times.Never);
+    }
+
+    [Fact]
+    public async Task ResetPasswordAsync_WithUnknownToken_Fails()
+    {
+        _userRepo
+            .Setup(r => r.GetAllAsync(
+                It.IsAny<System.Linq.Expressions.Expression<Func<User, bool>>>(),
+                It.IsAny<Func<IQueryable<User>, IOrderedQueryable<User>>>(),
+                It.IsAny<System.Linq.Expressions.Expression<Func<User, object>>[]>()))
+            .ReturnsAsync([]);
+
+        var result = await _sut.ResetPasswordAsync("no-such-token", "BrandNewPass@1");
+
+        result.Success.Should().BeFalse();
+        result.Error.Should().Be("Invalid or expired reset link");
+    }
+
+    [Fact]
+    public async Task ResetPasswordAsync_WithTooShortPassword_Fails()
+    {
+        var result = await _sut.ResetPasswordAsync("some-token", "short");
+
+        result.Success.Should().BeFalse();
+        result.Error.Should().Be("New password must be at least 8 characters");
+    }
+
+    [Fact]
+    public async Task LogoutAsync_WhenUserNotFound_ReturnsFalse()
+    {
+        // Arrange
+        _userRepo
+            .Setup(r => r.GetByIdAsync(
+                99,
+                It.IsAny<System.Linq.Expressions.Expression<Func<User, object>>[]>()))
+            .ReturnsAsync((User?)null);
+
+        // Act
+        var result = await _sut.LogoutAsync(99);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.Data.Should().BeFalse();
+        _uow.Verify(u => u.SaveAsync(), Times.Never);
+    }
+
+    [Fact]
+    public async Task LoginAsync_IssuedToken_CarriesSecurityStampClaim()
+    {
+        // Arrange
+        var user = MakeUser();
+
+        _userRepo
+            .Setup(r => r.GetByEmailAsync("john@barbershop.com"))
+            .ReturnsAsync(user);
+
+        // Act
+        var result = await _sut.LoginAsync(MakeLoginDTO());
+
+        // Assert — the stamp claim is what OnTokenValidated checks per request.
+        var jwt = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler()
+            .ReadJwtToken(result.Data!.Token);
+
+        jwt.Claims.Should().Contain(c =>
+            c.Type == "stamp" && c.Value == user.SecurityStamp);
+    }
+
+    // =========================
     // UNLOCK USER
     // =========================
 
@@ -476,7 +756,9 @@ public class AuthServiceTests
             _uow.Object,
             new TokenService(configWithoutGoogle),
             NullLogger<AuthService>.Instance,
-            configWithoutGoogle);
+            configWithoutGoogle,
+            _stamps.Object,
+            _emailService.Object);
 
         // Act
         var result = await sut.GoogleLoginAsync(new GoogleLoginDTO { IdToken = "any-token" });
@@ -497,7 +779,9 @@ public class AuthServiceTests
             _uow.Object,
             new TokenService(configWithGoogle),
             NullLogger<AuthService>.Instance,
-            configWithGoogle);
+            configWithGoogle,
+            _stamps.Object,
+            _emailService.Object);
 
         // Act — "bad-token" will cause GoogleJsonWebSignature.ValidateAsync to throw
         var result = await sut.GoogleLoginAsync(new GoogleLoginDTO { IdToken = "bad-token" });

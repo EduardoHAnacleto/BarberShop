@@ -137,10 +137,28 @@ services:
               [UserGoogleId]            NVARCHAR(200) NULL,
               [UserCustomerId]          INT           NULL,
               [UserWorkerId]            INT           NULL,
+              [UserSecurityStamp]       NVARCHAR(64)  NOT NULL CONSTRAINT [DF_Users_SecurityStamp] DEFAULT (CONVERT(NVARCHAR(64), NEWID())),
+              [UserPasswordResetToken]          NVARCHAR(128) NULL,
+              [UserPasswordResetTokenExpiresAt] DATETIME2     NULL,
               CONSTRAINT [PK_Users]           PRIMARY KEY ([UserId]),
               CONSTRAINT [FK_Users_Customers] FOREIGN KEY ([UserCustomerId]) REFERENCES [dbo].[Customers] ([CustomerId]),
               CONSTRAINT [FK_Users_Workers]   FOREIGN KEY ([UserWorkerId])   REFERENCES [dbo].[Workers]   ([WorkerId])
             );
+          END
+
+          IF COL_LENGTH('dbo.Users', 'UserSecurityStamp') IS NULL
+          BEGIN
+            ALTER TABLE [dbo].[Users] ADD [UserSecurityStamp] NVARCHAR(64) NOT NULL CONSTRAINT [DF_Users_SecurityStamp] DEFAULT (CONVERT(NVARCHAR(64), NEWID()));
+          END
+
+          IF COL_LENGTH('dbo.Users', 'UserPasswordResetToken') IS NULL
+          BEGIN
+            ALTER TABLE [dbo].[Users] ADD [UserPasswordResetToken] NVARCHAR(128) NULL;
+          END
+
+          IF COL_LENGTH('dbo.Users', 'UserPasswordResetTokenExpiresAt') IS NULL
+          BEGIN
+            ALTER TABLE [dbo].[Users] ADD [UserPasswordResetTokenExpiresAt] DATETIME2 NULL;
           END
 
           IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[Appointments]') AND type = 'U')
@@ -156,10 +174,46 @@ services:
               [AppointmentExtraDetails] NVARCHAR(500) NOT NULL DEFAULT '',
               [CreatedAt]               DATETIME2     NOT NULL DEFAULT GETUTCDATE(),
               [LastUpdatedAt]           DATETIME2     NULL,
+              [AppointmentRecurrenceId] UNIQUEIDENTIFIER NULL,
+              [AppointmentReminder24hSentAt] DATETIME2 NULL,
+              [AppointmentReminder1hSentAt]  DATETIME2 NULL,
               CONSTRAINT [PK_Appointments]          PRIMARY KEY ([AppointmentId]),
               CONSTRAINT [FK_Appointments_Workers]   FOREIGN KEY ([AppointmentWorkerId])   REFERENCES [dbo].[Workers]   ([WorkerId]),
               CONSTRAINT [FK_Appointments_Customers] FOREIGN KEY ([AppointmentCustomerId]) REFERENCES [dbo].[Customers] ([CustomerId]),
               CONSTRAINT [FK_Appointments_Services]  FOREIGN KEY ([AppointmentServiceId])  REFERENCES [dbo].[Services]  ([ServiceId])
+            );
+          END
+
+          IF COL_LENGTH('dbo.Appointments', 'AppointmentRecurrenceId') IS NULL
+          BEGIN
+            ALTER TABLE [dbo].[Appointments] ADD [AppointmentRecurrenceId] UNIQUEIDENTIFIER NULL;
+          END
+
+          IF COL_LENGTH('dbo.Appointments', 'AppointmentReminder24hSentAt') IS NULL
+          BEGIN
+            ALTER TABLE [dbo].[Appointments] ADD [AppointmentReminder24hSentAt] DATETIME2 NULL;
+          END
+
+          IF COL_LENGTH('dbo.Appointments', 'AppointmentReminder1hSentAt') IS NULL
+          BEGIN
+            ALTER TABLE [dbo].[Appointments] ADD [AppointmentReminder1hSentAt] DATETIME2 NULL;
+          END
+
+          IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[Reviews]') AND type = 'U')
+          BEGIN
+            CREATE TABLE [dbo].[Reviews] (
+              [ReviewId]            INT            NOT NULL IDENTITY(1,1),
+              [ReviewAppointmentId] INT            NOT NULL,
+              [ReviewCustomerId]    INT            NOT NULL,
+              [ReviewWorkerId]      INT            NOT NULL,
+              [ReviewRating]        INT            NOT NULL,
+              [ReviewComment]       NVARCHAR(1000) NOT NULL DEFAULT '',
+              [CreatedAt]           DATETIME2      NOT NULL DEFAULT GETUTCDATE(),
+              CONSTRAINT [PK_Reviews]                PRIMARY KEY ([ReviewId]),
+              CONSTRAINT [FK_Reviews_Appointments]    FOREIGN KEY ([ReviewAppointmentId]) REFERENCES [dbo].[Appointments] ([AppointmentId]) ON DELETE CASCADE,
+              CONSTRAINT [FK_Reviews_Customers]       FOREIGN KEY ([ReviewCustomerId])    REFERENCES [dbo].[Customers] ([CustomerId]),
+              CONSTRAINT [FK_Reviews_Workers]         FOREIGN KEY ([ReviewWorkerId])       REFERENCES [dbo].[Workers] ([WorkerId]),
+              CONSTRAINT [UQ_Reviews_AppointmentId]   UNIQUE ([ReviewAppointmentId])
             );
           END
 

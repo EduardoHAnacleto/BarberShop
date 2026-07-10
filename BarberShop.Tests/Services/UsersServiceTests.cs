@@ -19,6 +19,7 @@ public class UsersServiceTests
     private readonly Mock<IUserRepository> _userRepo;
     private readonly Mock<IRedisService> _redis;
     private readonly Mock<INotificationPublisher> _notifications;
+    private readonly Mock<ISecurityStampService> _stamps;
     private readonly IMapper _mapper;
     private readonly UsersService _sut;
 
@@ -50,7 +51,11 @@ public class UsersServiceTests
             cfg.AddProfile<MappingProfile>();
         }, NullLoggerFactory.Instance).CreateMapper();
 
-        _sut = new UsersService(_uow.Object, _mapper, _redis.Object, _notifications.Object, NullLogger<UsersService>.Instance);
+        _stamps = new Mock<ISecurityStampService>();
+        _stamps.Setup(s => s.InvalidateCacheAsync(It.IsAny<int>()))
+            .Returns(Task.CompletedTask);
+
+        _sut = new UsersService(_uow.Object, _mapper, _redis.Object, _notifications.Object, NullLogger<UsersService>.Instance, _stamps.Object);
     }
 
     // =========================
@@ -302,6 +307,86 @@ public class UsersServiceTests
             Times.Once);
 
         _uow.Verify(u => u.SaveAsync(), Times.Once);
+    }
+
+    [Fact]
+    public async Task Update_WhenEmailChanges_RotatesSecurityStamp()
+    {
+        // Arrange
+        var existing = MakeUser(1, "old@barbershop.com");
+        var originalStamp = existing.SecurityStamp;
+
+        var dto = MakeUserRequestDTO("new@barbershop.com");
+        dto.PasswordHash = ""; // keep current password
+
+        _userRepo
+            .Setup(r => r.GetByIdAsync(
+                1,
+                It.IsAny<System.Linq.Expressions.Expression<Func<User, object>>[]>()))
+            .ReturnsAsync(existing);
+
+        // Act
+        await _sut.Update(1, dto);
+
+        // Assert — email change must revoke previously issued tokens.
+        existing.SecurityStamp.Should().NotBe(originalStamp);
+        _stamps.Verify(s => s.InvalidateCacheAsync(1), Times.Once);
+    }
+
+    [Fact]
+    public async Task Update_WhenPasswordProvided_RotatesSecurityStampAndRehashes()
+    {
+        // Arrange
+        var existing = MakeUser(1);
+        var originalStamp = existing.SecurityStamp;
+        var originalHash = existing.PasswordHash;
+
+        var dto = MakeUserRequestDTO(existing.Email);
+        dto.PasswordHash = "NewPassword@123";
+
+        _userRepo
+            .Setup(r => r.GetByIdAsync(
+                1,
+                It.IsAny<System.Linq.Expressions.Expression<Func<User, object>>[]>()))
+            .ReturnsAsync(existing);
+
+        // Act
+        await _sut.Update(1, dto);
+
+        // Assert
+        existing.SecurityStamp.Should().NotBe(originalStamp);
+        existing.PasswordHash.Should().NotBe(originalHash);
+        BCrypt.Net.BCrypt.Verify("NewPassword@123", existing.PasswordHash).Should().BeTrue();
+        _stamps.Verify(s => s.InvalidateCacheAsync(1), Times.Once);
+    }
+
+    [Fact]
+    public async Task Update_WhenCredentialsUnchanged_KeepsStampAndPassword()
+    {
+        // Arrange — same email, empty password means "keep current password".
+        var existing = MakeUser(1);
+        var originalStamp = existing.SecurityStamp;
+        var originalHash = existing.PasswordHash;
+
+        var dto = MakeUserRequestDTO(existing.Email);
+        dto.PasswordHash = "";
+        dto.IsActive = false; // a non-credential field being edited
+
+        _userRepo
+            .Setup(r => r.GetByIdAsync(
+                1,
+                It.IsAny<System.Linq.Expressions.Expression<Func<User, object>>[]>()))
+            .ReturnsAsync(existing);
+
+        // Act
+        await _sut.Update(1, dto);
+
+        // Assert — sessions survive edits that do not touch credentials, and
+        // the stored hash must not be replaced by a hash of the empty string.
+        existing.SecurityStamp.Should().Be(originalStamp);
+        existing.PasswordHash.Should().Be(originalHash);
+        existing.IsActive.Should().BeFalse();
+        _stamps.Verify(s => s.InvalidateCacheAsync(It.IsAny<int>()), Times.Never);
     }
 
     [Fact]
