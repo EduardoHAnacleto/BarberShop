@@ -267,7 +267,12 @@ public class WorkersService : BaseService, IWorkersService
 
         _logger.LogInformation("Deleting worker {WorkerId}", id);
 
-        var worker = await _uow.Workers.GetByIdAsync(id);
+        // ProvidedServices must be loaded and cleared before the delete:
+        // service assignments are configuration (not history worth blocking
+        // on), and the WorkersService join table has no DB-level cascade —
+        // an unloaded collection makes SQL Server veto the delete even for a
+        // worker with no appointments or reviews.
+        var worker = await _uow.Workers.GetByIdAsync(id, w => w.ProvidedServices);
 
         if (worker == null)
         {
@@ -275,8 +280,17 @@ public class WorkersService : BaseService, IWorkersService
             return Result<WorkerDTO>.Ok(null);
         }
 
+        worker.ProvidedServices.Clear();
         _uow.Workers.Delete(worker);
-        await _uow.SaveAsync();
+        try
+        {
+            await _uow.SaveAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Worker {WorkerId} could not be deleted — likely has linked records", id);
+            return Result<WorkerDTO>.Fail("Cannot delete this worker: they have existing appointments, reviews, or other linked records.");
+        }
         await InvalidateAndNotifyAsync("workers", "WorkersChanged");
 
         _workersDeleted.Add(1);

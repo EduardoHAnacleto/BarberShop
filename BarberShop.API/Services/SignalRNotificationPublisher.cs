@@ -12,6 +12,9 @@ public class SignalRNotificationPublisher : INotificationPublisher
     private readonly IHubContext<CustomersHub> _customersHub;
     private readonly IHubContext<AppointmentsHub> _appointmentsHub;
     private readonly IHubContext<UsersHub> _usersHub;
+    private readonly IHubContext<ReviewsHub> _reviewsHub;
+    private readonly IHubContext<ScheduleHub> _scheduleHub;
+    private readonly IHubContext<WorkerSchedulesHub> _workerSchedulesHub;
     private readonly ILogger<SignalRNotificationPublisher> _logger;
 
     public SignalRNotificationPublisher(
@@ -20,6 +23,9 @@ public class SignalRNotificationPublisher : INotificationPublisher
         IHubContext<CustomersHub> customersHub,
         IHubContext<AppointmentsHub> appointmentsHub,
         IHubContext<UsersHub> usersHub,
+        IHubContext<ReviewsHub> reviewsHub,
+        IHubContext<ScheduleHub> scheduleHub,
+        IHubContext<WorkerSchedulesHub> workerSchedulesHub,
         ILogger<SignalRNotificationPublisher> logger)
     {
         _workersHub = workersHub;
@@ -27,6 +33,9 @@ public class SignalRNotificationPublisher : INotificationPublisher
         _customersHub = customersHub;
         _appointmentsHub = appointmentsHub;
         _usersHub = usersHub;
+        _reviewsHub = reviewsHub;
+        _scheduleHub = scheduleHub;
+        _workerSchedulesHub = workerSchedulesHub;
         _logger = logger;
     }
 
@@ -34,12 +43,15 @@ public class SignalRNotificationPublisher : INotificationPublisher
     {
         var clients = channel switch
         {
-            "workers"      => _workersHub.Clients,
-            "services"     => _servicesHub.Clients,
-            "customers"    => _customersHub.Clients,
-            "appointments" => _appointmentsHub.Clients,
-            "users"        => _usersHub.Clients,
-            _              => null
+            "workers"          => _workersHub.Clients,
+            "services"         => _servicesHub.Clients,
+            "customers"        => _customersHub.Clients,
+            "appointments"     => _appointmentsHub.Clients,
+            "users"            => _usersHub.Clients,
+            "reviews"          => _reviewsHub.Clients,
+            "schedule"         => _scheduleHub.Clients,
+            "worker-schedules" => _workerSchedulesHub.Clients,
+            _                  => null
         };
 
         if (clients is null)

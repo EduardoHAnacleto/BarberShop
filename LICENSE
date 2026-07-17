@@ -1,0 +1,51 @@
+BarberShop Management System — Proprietary Source-Available License
+
+Copyright (c) 2026 Eduardo Hipolito Anacleto. All rights reserved.
+
+1. DEFINITIONS
+   "Software" means the source code, configuration, assets, documentation,
+   and any build artifacts contained in this repository, in whole or in part.
+   "Owner" means the copyright holder named above.
+
+2. EVALUATION GRANT
+   Permission is hereby granted, free of charge, to any person obtaining a
+   copy of the Software, to view, clone, build, and run the Software locally,
+   solely for the purposes of:
+   (a) personal, non-commercial evaluation, study, or learning; and
+   (b) reviewing the Owner's work (e.g., portfolio and hiring evaluation).
+
+3. RESTRICTIONS
+   Except as expressly permitted in Section 2, no rights are granted. In
+   particular, without a separate written agreement signed by the Owner, you
+   may NOT:
+   (a) use the Software, or any output of it, in production or for any
+       commercial purpose, including operating it for a business or offering
+       it to third parties as a service (hosted or otherwise);
+   (b) redistribute, publish, sublicense, sell, rent, or lease the Software
+       or any substantial portion of it;
+   (c) create or distribute derivative works of the Software beyond local,
+       private experimentation permitted by Section 2; or
+   (d) remove or alter any copyright, license, or attribution notices.
+
+4. COMMERCIAL LICENSING
+   Production and commercial use — including rented, managed, per-client
+   instances operated by the Owner — is available under a separate written
+   service or license agreement. Contact: eduardohanacleto@gmail.com
+
+5. CONTRIBUTIONS
+   By submitting any contribution (e.g., a pull request) to this repository,
+   you grant the Owner a perpetual, worldwide, irrevocable, royalty-free
+   license to use, modify, relicense, and distribute that contribution as
+   part of the Software.
+
+6. NO WARRANTY
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL
+   THE OWNER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING
+   FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR ITS USE.
+
+7. TERMINATION
+   Any breach of this license automatically terminates the rights granted in
+   Section 2. Upon termination you must destroy all copies of the Software in
+   your possession.

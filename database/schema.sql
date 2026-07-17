@@ -309,6 +309,60 @@ END
 GO
 
 -- =============================================
+-- Waitlist
+-- =============================================
+IF NOT EXISTS (SELECT * FROM sys.objects
+    WHERE object_id = OBJECT_ID(N'[dbo].[Waitlist]') AND type = 'U')
+BEGIN
+    CREATE TABLE [dbo].[Waitlist] (
+        [WaitlistId]            INT       NOT NULL IDENTITY(1,1),
+        [WaitlistCustomerId]    INT       NOT NULL,
+        [WaitlistWorkerId]      INT       NOT NULL,
+        [WaitlistServiceId]     INT       NOT NULL,
+        [WaitlistPreferredDate] DATETIME2 NOT NULL,
+        [CreatedAt]             DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+        [WaitlistNotifiedAt]    DATETIME2 NULL,
+
+        CONSTRAINT [PK_Waitlist] PRIMARY KEY ([WaitlistId]),
+
+        CONSTRAINT [FK_Waitlist_Customers] FOREIGN KEY ([WaitlistCustomerId])
+            REFERENCES [dbo].[Customers] ([CustomerId]) ON DELETE CASCADE,
+
+        CONSTRAINT [FK_Waitlist_Workers] FOREIGN KEY ([WaitlistWorkerId])
+            REFERENCES [dbo].[Workers] ([WorkerId]),
+
+        CONSTRAINT [FK_Waitlist_Services] FOREIGN KEY ([WaitlistServiceId])
+            REFERENCES [dbo].[Services] ([ServiceId])
+    );
+END
+GO
+
+-- =============================================
+-- WorkerSchedules
+-- =============================================
+IF NOT EXISTS (SELECT * FROM sys.objects
+    WHERE object_id = OBJECT_ID(N'[dbo].[WorkerSchedules]') AND type = 'U')
+BEGIN
+    CREATE TABLE [dbo].[WorkerSchedules] (
+        [Id]         INT  NOT NULL IDENTITY(1,1),
+        [WorkerId]   INT  NOT NULL,
+        [DayOfWeek]  INT  NOT NULL,
+        [IsOpen]     BIT  NOT NULL DEFAULT 0,
+        [OpenTime]   TIME NULL,
+        [CloseTime]  TIME NULL,
+        [BreakStart] TIME NULL,
+        [BreakEnd]   TIME NULL,
+
+        CONSTRAINT [PK_WorkerSchedules] PRIMARY KEY ([Id]),
+        CONSTRAINT [UQ_WorkerSchedules_WorkerId_DayOfWeek] UNIQUE ([WorkerId], [DayOfWeek]),
+
+        CONSTRAINT [FK_WorkerSchedules_Workers] FOREIGN KEY ([WorkerId])
+            REFERENCES [dbo].[Workers] ([WorkerId]) ON DELETE CASCADE
+    );
+END
+GO
+
+-- =============================================
 -- Indexes
 -- =============================================
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Users_Email')
@@ -334,6 +388,11 @@ GO
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Reviews_WorkerId')
     CREATE INDEX [IX_Reviews_WorkerId]
         ON [dbo].[Reviews] ([ReviewWorkerId]);
+GO
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Waitlist_WorkerId_PreferredDate')
+    CREATE INDEX [IX_Waitlist_WorkerId_PreferredDate]
+        ON [dbo].[Waitlist] ([WaitlistWorkerId], [WaitlistPreferredDate]);
 GO
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Appointments_Status')

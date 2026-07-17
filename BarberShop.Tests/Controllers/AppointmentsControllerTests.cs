@@ -141,6 +141,52 @@ public class AppointmentsControllerTests
     }
 
     // =========================
+    // DELETE
+    // =========================
+
+    [Fact]
+    public async Task Delete_WhenServiceSucceeds_ReturnsNoContent()
+    {
+        // Regression test: AppointmentsService.Delete returns Ok(null) on
+        // success (there is no meaningful DTO for a cancellation) — the
+        // controller must not mistake that null Data for a not-found result.
+        SetCaller(1, "Admin");
+        _access.Setup(a => a.CanMutateAsync(1, true, It.Is<IEnumerable<int>>(l => l.Single() == 50)))
+            .ReturnsAsync(true);
+        _service.Setup(s => s.Delete(50)).ReturnsAsync(Result<AppointmentResponseDTO>.Ok(null));
+
+        var result = await _sut.Delete(50);
+
+        result.Should().BeOfType<NoContentResult>();
+    }
+
+    [Fact]
+    public async Task Delete_WhenServiceFails_ReturnsBadRequest()
+    {
+        SetCaller(1, "Admin");
+        _access.Setup(a => a.CanMutateAsync(1, true, It.Is<IEnumerable<int>>(l => l.Single() == 50)))
+            .ReturnsAsync(true);
+        _service.Setup(s => s.Delete(50)).ReturnsAsync(Result<AppointmentResponseDTO>.Fail("Already cancelled"));
+
+        var result = await _sut.Delete(50);
+
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public async Task Delete_WhenNotOwner_ReturnsForbidAndDoesNotDelete()
+    {
+        SetCaller(10, "Client");
+        _access.Setup(a => a.CanMutateAsync(10, false, It.Is<IEnumerable<int>>(l => l.Single() == 50)))
+            .ReturnsAsync(false);
+
+        var result = await _sut.Delete(50);
+
+        result.Should().BeOfType<ForbidResult>();
+        _service.Verify(s => s.Delete(It.IsAny<int>()), Times.Never);
+    }
+
+    // =========================
     // CREATE RECURRING
     // =========================
 

@@ -261,7 +261,15 @@ public class UsersService : BaseService, IUsersService
         }
 
         _uow.Users.Delete(user);
-        await _uow.SaveAsync();
+        try
+        {
+            await _uow.SaveAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "User {UserId} could not be deleted — likely has linked records", id);
+            return Result<UserResponseDTO>.Fail("Cannot delete this user: it has linked records.");
+        }
         await InvalidateAndNotifyAsync("users", "UsersChanged");
 
         _usersDeleted.Add(1);

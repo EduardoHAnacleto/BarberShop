@@ -332,10 +332,13 @@ public class AuthService : IAuthService
             return Result<AuthResponseDTO>.Fail("This email is already registered.");
         }
 
-        await _uow.BeginTransactionAsync();
         try
         {
-            // Create the customer profile first so we can link it to the user.
+            // Create the customer profile and link it via the navigation property
+            // (rather than a pre-fetched Id) so both rows insert in a single
+            // SaveChangesAsync — one implicit transaction EF Core can retry as a
+            // unit under EnableRetryOnFailure, instead of a manual BeginTransaction
+            // that strategy does not support.
             var customer = new Customer
             {
                 Name = dto.Name.Trim(),
@@ -344,7 +347,6 @@ public class AuthService : IAuthService
                 DateOfBirth = dto.DateOfBirth,
             };
             await _uow.Customers.AddAsync(customer);
-            await _uow.SaveAsync();
 
             // Create the user account with a hashed password and Client role.
             var user = new User
@@ -353,11 +355,10 @@ public class AuthService : IAuthService
                 PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password),
                 UserRole = UserRoles.Client,
                 IsActive = true,
-                CustomerId = customer.Id,
+                Customer = customer,
             };
             await _uow.Users.AddAsync(user);
             await _uow.SaveAsync();
-            await _uow.CommitAsync();
 
             var token = _token.GenerateToken(user);
 
@@ -375,7 +376,6 @@ public class AuthService : IAuthService
         }
         catch (Exception ex)
         {
-            await _uow.RollbackAsync();
             span?.SetStatus(ActivityStatusCode.Error, ex.Message);
             _logger.LogError(ex, "Registration failed for {Email}", email);
             return Result<AuthResponseDTO>.Fail("Registration failed. Please try again.");

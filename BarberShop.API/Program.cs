@@ -175,6 +175,8 @@ builder.Services.AddScoped<IReportsService, ReportsService>();
 builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddScoped<IAppointmentReminderService, AppointmentReminderService>();
 builder.Services.AddHostedService<AppointmentReminderBackgroundService>();
+builder.Services.AddScoped<IWaitlistService, WaitlistService>();
+builder.Services.AddScoped<IWorkerScheduleService, WorkerScheduleService>();
 builder.Services.AddSingleton<IShopClock, ShopClock>();
 builder.Services.AddSingleton<TokenService>();
 builder.Services.AddScoped<INotificationPublisher, SignalRNotificationPublisher>();
@@ -243,30 +245,38 @@ app.UseAuthorization();
 // =========================
 app.MapHealthChecks("/health");
 
-app.MapHealthChecks("/health/detail", new HealthCheckOptions
+// The verbose per-dependency report is deliberately public on the portfolio
+// demo (default true), but a rented client instance disables it via
+// HealthChecks__DetailEnabled=false — it enumerates infrastructure internals
+// (sprint12072026license §6). The plain /health above always stays available
+// for the container healthcheck.
+if (builder.Configuration.GetValue("HealthChecks:DetailEnabled", true))
 {
-    ResponseWriter = async (context, report) =>
+    app.MapHealthChecks("/health/detail", new HealthCheckOptions
     {
-        context.Response.ContentType = "application/json";
-
-        var result = new
+        ResponseWriter = async (context, report) =>
         {
-            status = report.Status.ToString(),
-            duration = report.TotalDuration.TotalMilliseconds + "ms",
-            checks = report.Entries.Select(e => new
-            {
-                name = e.Key,
-                status = e.Value.Status.ToString(),
-                duration = e.Value.Duration.TotalMilliseconds + "ms",
-                tags = e.Value.Tags,
-                description = e.Value.Description,
-                error = e.Value.Exception?.Message
-            })
-        };
+            context.Response.ContentType = "application/json";
 
-        await context.Response.WriteAsJsonAsync(result);
-    }
-});
+            var result = new
+            {
+                status = report.Status.ToString(),
+                duration = report.TotalDuration.TotalMilliseconds + "ms",
+                checks = report.Entries.Select(e => new
+                {
+                    name = e.Key,
+                    status = e.Value.Status.ToString(),
+                    duration = e.Value.Duration.TotalMilliseconds + "ms",
+                    tags = e.Value.Tags,
+                    description = e.Value.Description,
+                    error = e.Value.Exception?.Message
+                })
+            };
+
+            await context.Response.WriteAsJsonAsync(result);
+        }
+    });
+}
 
 // =========================
 // Controllers e Hubs
@@ -287,5 +297,8 @@ app.MapHub<ServicesHub>("/servicesHub").RequireCors("FrontendPolicy");
 app.MapHub<CustomersHub>("/customersHub").RequireCors("FrontendPolicy");
 app.MapHub<AppointmentsHub>("/appointmentsHub").RequireCors("FrontendPolicy");
 app.MapHub<UsersHub>("/usersHub").RequireCors("FrontendPolicy");
+app.MapHub<ReviewsHub>("/reviewsHub").RequireCors("FrontendPolicy");
+app.MapHub<ScheduleHub>("/scheduleHub").RequireCors("FrontendPolicy");
+app.MapHub<WorkerSchedulesHub>("/workerSchedulesHub").RequireCors("FrontendPolicy");
 
 app.Run();

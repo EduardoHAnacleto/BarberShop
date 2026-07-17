@@ -459,6 +459,59 @@ public class WorkersServiceTests
         _uow.Verify(u => u.SaveAsync(), Times.Never);
     }
 
+    [Fact]
+    public async Task Delete_WhenWorkerHasLinkedRecords_ReturnsFriendlyErrorInsteadOfThrowing()
+    {
+        // Regression test: deleting a worker with existing appointments/reviews
+        // used to bubble up an unhandled DbUpdateException (SQL error 547) as a
+        // raw 500 — WorkersService.Delete must catch it and fail gracefully.
+        var worker = MakeWorker(1);
+        _workerRepo
+            .Setup(r => r.GetByIdAsync(
+                1,
+                It.IsAny<System.Linq.Expressions.Expression<Func<Worker, object>>[]>()))
+            .ReturnsAsync(worker);
+        _uow.Setup(u => u.SaveAsync()).ThrowsAsync(new InvalidOperationException("FK violation"));
+
+        var result = await _sut.Delete(1);
+
+        result.Success.Should().BeFalse();
+        result.Error.Should().Contain("existing appointments");
+    }
+
+    [Fact]
+    public async Task Delete_ClearsServiceAssignmentsBeforeDeleting()
+    {
+        // A worker whose only "linked records" are service assignments must be
+        // deletable — assignments are configuration, not history, and the
+        // WorkersService join table has no DB-level cascade, so leaving the
+        // loaded collection populated makes SQL Server veto the delete.
+        var worker = MakeWorker(1);
+        worker.ProvidedServices = new List<Service>
+        {
+            new() { Id = 1, Name = "Haircut", Duration = 30, Price = 25m },
+        };
+
+        _workerRepo
+            .Setup(r => r.GetByIdAsync(
+                1,
+                It.IsAny<System.Linq.Expressions.Expression<Func<Worker, object>>[]>()))
+            .ReturnsAsync(worker);
+
+        var result = await _sut.Delete(1);
+
+        result.Success.Should().BeTrue();
+        worker.ProvidedServices.Should().BeEmpty();
+
+        _workerRepo.Verify(r =>
+            r.Delete(
+                It.Is<Worker>(w => w.Id == 1),
+                It.IsAny<System.Linq.Expressions.Expression<Func<Worker, object>>[]>()),
+            Times.Once);
+
+        _uow.Verify(u => u.SaveAsync(), Times.Once);
+    }
+
     // =========================
     // GET SERVICES BY WORKER
     // =========================

@@ -101,9 +101,6 @@ public class WorkersController : ControllerBase
         if (!result.Success)
             return BadRequest(result.Error);
 
-        if (result.Data == null)
-            return NotFound();
-
         return NoContent();
     }
 

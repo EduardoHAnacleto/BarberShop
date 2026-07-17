@@ -384,4 +384,24 @@ public class ServicesServiceTests
 
         _uow.Verify(u => u.SaveAsync(), Times.Never);
     }
+
+    [Fact]
+    public async Task Delete_WhenServiceHasLinkedRecords_ReturnsFriendlyErrorInsteadOfThrowing()
+    {
+        // Regression test: deleting a service with existing appointments used to
+        // bubble up an unhandled DbUpdateException (SQL error 547) as a raw 500 —
+        // ServicesService.Delete must catch it and fail gracefully.
+        var service = new Service { Id = 1, Name = "Haircut" };
+        _serviceRepo
+            .Setup(r => r.GetByIdAsync(
+                1,
+                It.IsAny<System.Linq.Expressions.Expression<Func<Service, object>>[]>()))
+            .ReturnsAsync(service);
+        _uow.Setup(u => u.SaveAsync()).ThrowsAsync(new InvalidOperationException("FK violation"));
+
+        var result = await _sut.Delete(1);
+
+        result.Success.Should().BeFalse();
+        result.Error.Should().Contain("existing appointments");
+    }
 }

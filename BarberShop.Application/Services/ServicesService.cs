@@ -244,7 +244,15 @@ public class ServicesService : BaseService, IServicesService
         }
 
         _uow.Services.Delete(service);
-        await _uow.SaveAsync();
+        try
+        {
+            await _uow.SaveAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Service {ServiceId} could not be deleted — likely has linked records", id);
+            return Result<ServiceDTO>.Fail("Cannot delete this service: it has existing appointments or is assigned to workers.");
+        }
         await InvalidateAndNotifyAsync("services", "ServicesChanged");
 
         _servicesDeleted.Add(1);

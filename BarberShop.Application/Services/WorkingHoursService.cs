@@ -9,7 +9,7 @@ using System.Diagnostics;
 
 namespace BarberShop.Application.Services;
 
-public class WorkingHoursService : IWorkingHoursService
+public class WorkingHoursService : BaseService, IWorkingHoursService
 {
     // =========================
     // OBSERVABILITY
@@ -27,7 +27,9 @@ public class WorkingHoursService : IWorkingHoursService
     public WorkingHoursService(
         IUnitOfWork uow,
         IMapper mapper,
-        ILogger<WorkingHoursService> logger)
+        IRedisService redis,
+        INotificationPublisher notifications,
+        ILogger<WorkingHoursService> logger) : base(redis, notifications)
     {
         _uow = uow;
         _mapper = mapper;
@@ -88,10 +90,20 @@ public class WorkingHoursService : IWorkingHoursService
             return Result<BusinessScheduleDTO>.Fail("Schedule not found");
         }
 
+        var validationError = ScheduleTimeValidator.Validate(
+            dto.IsOpen, dto.OpenTime, dto.CloseTime, dto.BreakStart, dto.BreakEnd);
+        if (validationError != null)
+        {
+            _logger.LogWarning(
+                "Schedule {ScheduleId} update rejected: {Reason}", id, validationError);
+            return Result<BusinessScheduleDTO>.Fail(validationError);
+        }
+
         _mapper.Map(dto, schedule);
 
         _uow.BusinessSchedules.Update(schedule);
         await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("schedule", "ScheduleChanged");
 
         _logger.LogInformation("Schedule {ScheduleId} updated successfully", id);
 
@@ -135,6 +147,7 @@ public class WorkingHoursService : IWorkingHoursService
 
         await _uow.WorkingHours.AddAsync(closure);
         await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("schedule", "ScheduleChanged");
 
         _logger.LogInformation("Closure {ClosureId} added successfully", closure.Id);
 
@@ -158,6 +171,7 @@ public class WorkingHoursService : IWorkingHoursService
 
         _uow.WorkingHours.Delete(closure);
         await _uow.SaveAsync();
+        await InvalidateAndNotifyAsync("schedule", "ScheduleChanged");
 
         _logger.LogInformation("Closure {ClosureId} removed successfully", id);
 

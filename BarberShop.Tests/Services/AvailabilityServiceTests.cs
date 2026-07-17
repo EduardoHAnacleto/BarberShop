@@ -17,6 +17,7 @@ public class AvailabilityServiceTests
     private readonly Mock<IServiceRepository> _serviceRepo;
     private readonly Mock<IAppointmentRepository> _appointmentRepo;
     private readonly Mock<IWorkingHoursService> _workingHours;
+    private readonly Mock<IWorkerScheduleRepository> _workerScheduleRepo;
     private readonly Mock<IShopClock> _clock;
     private readonly AvailabilityService _sut;
 
@@ -30,10 +31,17 @@ public class AvailabilityServiceTests
         _serviceRepo = new Mock<IServiceRepository>();
         _appointmentRepo = new Mock<IAppointmentRepository>();
 
+        _workerScheduleRepo = new Mock<IWorkerScheduleRepository>();
+        // Default: no per-worker override — falls back to the shop schedule.
+        _workerScheduleRepo
+            .Setup(r => r.GetByWorkerAndDayAsync(It.IsAny<int>(), It.IsAny<DayOfWeek>()))
+            .ReturnsAsync((WorkerSchedule?)null);
+
         _uow = new Mock<IUnitOfWork>();
         _uow.Setup(u => u.Workers).Returns(_workerRepo.Object);
         _uow.Setup(u => u.Services).Returns(_serviceRepo.Object);
         _uow.Setup(u => u.Appointments).Returns(_appointmentRepo.Object);
+        _uow.Setup(u => u.WorkerSchedules).Returns(_workerScheduleRepo.Object);
 
         _workingHours = new Mock<IWorkingHoursService>();
         // Default: standard business day 09:00–18:00 with a 12:00–13:00 break.
@@ -142,7 +150,7 @@ public class AvailabilityServiceTests
     // =========================
 
     [Fact]
-    public async Task GetAvailability_WhenDayIsClosed_ReturnsNoSlots()
+    public async Task GetAvailability_WhenDayIsClosed_ReturnsNoSlotsAndIsOpenFalse()
     {
         _workingHours
             .Setup(w => w.GetScheduleByDayAsync(Today.DayOfWeek))
@@ -152,6 +160,7 @@ public class AvailabilityServiceTests
 
         result.Success.Should().BeTrue();
         result.Data!.Slots.Should().BeEmpty();
+        result.Data.IsOpen.Should().BeFalse();
     }
 
     [Fact]
@@ -164,6 +173,9 @@ public class AvailabilityServiceTests
         var result = await _sut.GetAvailabilityAsync(1, Today, 1);
 
         result.Data!.Slots.Should().BeEmpty();
+        // Known limitation: a closure record isn't distinguished from "fully
+        // booked" — IsOpen only reflects the weekly schedule / past-day cases.
+        result.Data.IsOpen.Should().BeTrue();
     }
 
     [Fact]
@@ -285,7 +297,7 @@ public class AvailabilityServiceTests
     }
 
     [Fact]
-    public async Task GetAvailability_PastDate_ReturnsNoSlots()
+    public async Task GetAvailability_PastDate_ReturnsNoSlotsAndIsOpenFalse()
     {
         _clock.Setup(c => c.Now).Returns(new DateTime(2026, 7, 12, 8, 0, 0));
 
@@ -293,6 +305,16 @@ public class AvailabilityServiceTests
 
         result.Success.Should().BeTrue();
         result.Data!.Slots.Should().BeEmpty();
+        result.Data.IsOpen.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetAvailability_OpenDayWithFreeSlots_IsOpenTrue()
+    {
+        var result = await _sut.GetAvailabilityAsync(1, Today, 1);
+
+        result.Data!.IsOpen.Should().BeTrue();
+        result.Data.Slots.Should().NotBeEmpty();
     }
 
     [Fact]
@@ -304,5 +326,84 @@ public class AvailabilityServiceTests
         var result = await _sut.GetAvailabilityAsync(1, Today, 1);
 
         result.Data!.Slots.Should().HaveCount(16);
+    }
+
+    // =========================
+    // PER-WORKER SCHEDULE OVERRIDE (5.3)
+    // =========================
+
+    [Fact]
+    public async Task GetAvailability_WhenWorkerHasOverride_UsesWorkerHoursInsteadOfShopDefault()
+    {
+        // Worker only works a short morning shift, no break — narrower than
+        // the shop's 09:00–18:00 default.
+        _workerScheduleRepo
+            .Setup(r => r.GetByWorkerAndDayAsync(1, Today.DayOfWeek))
+            .ReturnsAsync(new WorkerSchedule
+            {
+                WorkerId = 1,
+                DayOfWeek = Today.DayOfWeek,
+                IsOpen = true,
+                OpenTime = TimeSpan.Parse("09:00"),
+                CloseTime = TimeSpan.Parse("12:00"),
+            });
+
+        var result = await _sut.GetAvailabilityAsync(1, Today, 1);
+
+        var slots = result.Data!.Slots;
+        // 09:00–12:00 every 30 min, no break = 6 slots.
+        slots.Should().HaveCount(6);
+        slots.Should().Contain(["09:00", "11:30"]);
+        slots.Should().NotContain(["12:00", "13:00", "17:30"]);
+    }
+
+    [Fact]
+    public async Task GetAvailability_WhenWorkerOverrideMarksDayOff_ReturnsNoSlotsEvenThoughShopIsOpen()
+    {
+        _workerScheduleRepo
+            .Setup(r => r.GetByWorkerAndDayAsync(1, Today.DayOfWeek))
+            .ReturnsAsync(new WorkerSchedule { WorkerId = 1, DayOfWeek = Today.DayOfWeek, IsOpen = false });
+
+        var result = await _sut.GetAvailabilityAsync(1, Today, 1);
+
+        result.Success.Should().BeTrue();
+        result.Data!.Slots.Should().BeEmpty();
+        result.Data.IsOpen.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetAvailability_WhenShopClosedThatDay_WorkerOverrideCannotOverrideIt()
+    {
+        // Shop itself is closed that day — a worker override marking
+        // themself "open" must not make them bookable.
+        _workingHours
+            .Setup(w => w.GetScheduleByDayAsync(Today.DayOfWeek))
+            .ReturnsAsync(MakeSchedule(isOpen: false));
+        _workerScheduleRepo
+            .Setup(r => r.GetByWorkerAndDayAsync(1, Today.DayOfWeek))
+            .ReturnsAsync(new WorkerSchedule
+            {
+                WorkerId = 1,
+                DayOfWeek = Today.DayOfWeek,
+                IsOpen = true,
+                OpenTime = TimeSpan.Parse("09:00"),
+                CloseTime = TimeSpan.Parse("18:00"),
+            });
+
+        var result = await _sut.GetAvailabilityAsync(1, Today, 1);
+
+        result.Data!.Slots.Should().BeEmpty();
+        result.Data.IsOpen.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetAvailability_WhenNoOverrideExists_FallsBackToShopSchedule()
+    {
+        // Explicit regression check: GetByWorkerAndDayAsync returning null
+        // (the default mock setup) must reproduce the exact pre-5.3 grid.
+        var result = await _sut.GetAvailabilityAsync(1, Today, 1);
+
+        result.Data!.Slots.Should().HaveCount(16);
+        result.Data.Slots.Should().Contain(["09:00", "17:30"]);
     }
 }

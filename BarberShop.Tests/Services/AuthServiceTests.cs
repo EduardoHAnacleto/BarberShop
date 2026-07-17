@@ -661,8 +661,11 @@ public class AuthServiceTests
         result.Data.Email.Should().Be("john@barbershop.com");
         result.Data.UserRole.Should().Be(UserRoles.Client.ToString());
 
-        _uow.Verify(u => u.BeginTransactionAsync(), Times.Once);
-        _uow.Verify(u => u.CommitAsync(), Times.Once);
+        // Customer + User must insert via a single SaveChangesAsync (linked
+        // through the Customer navigation property) so the whole operation
+        // stays inside one retryable transaction under EnableRetryOnFailure —
+        // see AuthService.RegisterAsync.
+        _uow.Verify(u => u.SaveAsync(), Times.Once);
         _uow.Verify(u => u.RollbackAsync(), Times.Never);
     }
 
@@ -683,7 +686,6 @@ public class AuthServiceTests
         result.Success.Should().BeFalse();
         result.Error.Should().Be("This email is already registered.");
 
-        _uow.Verify(u => u.BeginTransactionAsync(), Times.Never);
         _uow.Verify(u => u.SaveAsync(), Times.Never);
     }
 
@@ -712,7 +714,7 @@ public class AuthServiceTests
         result.Success.Should().BeFalse();
         result.Error.Should().Be(expectedError);
 
-        _uow.Verify(u => u.BeginTransactionAsync(), Times.Never);
+        _uow.Verify(u => u.SaveAsync(), Times.Never);
     }
 
     [Fact]

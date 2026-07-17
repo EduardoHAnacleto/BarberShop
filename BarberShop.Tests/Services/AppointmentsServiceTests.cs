@@ -21,6 +21,7 @@ public class AppointmentsServiceTests
     private readonly Mock<ICustomerRepository> _customerRepo;
     private readonly Mock<IRedisService> _redis;
     private readonly Mock<INotificationPublisher> _notifications;
+    private readonly Mock<IWaitlistService> _waitlist;
     private readonly IMapper _mapper;
     private readonly AppointmentsService _sut;
 
@@ -76,12 +77,18 @@ public class AppointmentsServiceTests
         _notifications.Setup(n => n.PublishAsync(It.IsAny<string>(), It.IsAny<string>()))
             .Returns(Task.CompletedTask);
 
+        _waitlist = new Mock<IWaitlistService>();
+        _waitlist.Setup(w => w.NotifyWaitlistForAsync(It.IsAny<int>(), It.IsAny<DateTime>()))
+            .ReturnsAsync(0);
+
         _mapper = new MapperConfiguration(cfg =>
         {
             cfg.AddProfile<MappingProfile>();
         }, NullLoggerFactory.Instance).CreateMapper();
 
-        _sut = new AppointmentsService(_uow.Object, _mapper, _redis.Object, _notifications.Object, NullLogger<AppointmentsService>.Instance);
+        _sut = new AppointmentsService(
+            _uow.Object, _mapper, _redis.Object, _notifications.Object,
+            NullLogger<AppointmentsService>.Instance, _waitlist.Object);
     }
 
     // =========================
@@ -787,6 +794,41 @@ public class AppointmentsServiceTests
         _uow.Verify(u => u.SaveAsync(), Times.Once);
     }
 
+    [Fact]
+    public async Task Delete_WhenCancelled_NotifiesTheWaitlistForThatWorkerAndDay()
+    {
+        var scheduledFor = DateTime.Parse("2026-08-01T14:00:00");
+        var entity = MakeAppointment(1, Status.Scheduled, scheduledFor);
+        entity.WorkerId = 7;
+
+        _appointmentRepo
+            .Setup(r => r.GetByIdAsync(1, It.IsAny<System.Linq.Expressions.Expression<Func<Appointment, object>>[]>()))
+            .ReturnsAsync(entity);
+        _appointmentRepo.Setup(r => r.VirtualDelete(It.IsAny<Appointment>())).Returns(Task.CompletedTask);
+
+        await _sut.Delete(1);
+
+        _waitlist.Verify(w => w.NotifyWaitlistForAsync(7, scheduledFor), Times.Once);
+    }
+
+    [Fact]
+    public async Task Delete_WhenWaitlistNotificationThrows_StillReturnsSuccess()
+    {
+        var entity = MakeAppointment(1, Status.Scheduled);
+        _appointmentRepo
+            .Setup(r => r.GetByIdAsync(1, It.IsAny<System.Linq.Expressions.Expression<Func<Appointment, object>>[]>()))
+            .ReturnsAsync(entity);
+        _appointmentRepo.Setup(r => r.VirtualDelete(It.IsAny<Appointment>())).Returns(Task.CompletedTask);
+        _waitlist.Setup(w => w.NotifyWaitlistForAsync(It.IsAny<int>(), It.IsAny<DateTime>()))
+            .ThrowsAsync(new InvalidOperationException("SMTP down"));
+
+        var result = await _sut.Delete(1);
+
+        // The cancellation already committed — a notification hiccup must not
+        // surface as a failed cancel.
+        result.Success.Should().BeTrue();
+    }
+
     // =========================
     // FILTERS
     // =========================
@@ -1057,6 +1099,20 @@ public class AppointmentsServiceTests
             Times.Exactly(2));
 
         _uow.Verify(u => u.SaveAsync(), Times.Once);
+    }
+
+    [Fact]
+    public async Task CancelAppointments_NotifiesTheWaitlistForEachFreedWorker()
+    {
+        var entity = MakeAppointment(1);
+        entity.WorkerId = 7;
+        _appointmentRepo
+            .Setup(r => r.GetByIdAsync(1, It.IsAny<System.Linq.Expressions.Expression<Func<Appointment, object>>[]>()))
+            .ReturnsAsync(entity);
+
+        await _sut.CancelAppointments([1]);
+
+        _waitlist.Verify(w => w.NotifyWaitlistForAsync(7, entity.ScheduledFor), Times.Once);
     }
 
     [Fact]

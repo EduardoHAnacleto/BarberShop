@@ -231,7 +231,15 @@ public class CustomersService : BaseService, ICustomersService
         }
 
         _uow.Customers.Delete(customer);
-        await _uow.SaveAsync();
+        try
+        {
+            await _uow.SaveAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Customer {CustomerId} could not be deleted — likely has linked records", id);
+            return Result<CustomerDTO>.Fail("Cannot delete this customer: they have existing appointments or reviews.");
+        }
         await InvalidateAndNotifyAsync("customers", "CustomersChanged");
 
         _customersDeleted.Add(1);

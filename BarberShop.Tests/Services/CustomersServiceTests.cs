@@ -365,4 +365,24 @@ public class CustomersServiceTests
 
         _uow.Verify(u => u.SaveAsync(), Times.Never);
     }
+
+    [Fact]
+    public async Task Delete_WhenCustomerHasLinkedRecords_ReturnsFriendlyErrorInsteadOfThrowing()
+    {
+        // Regression test: deleting a customer with existing appointments/reviews
+        // used to bubble up an unhandled DbUpdateException (SQL error 547) as a
+        // raw 500 — CustomersService.Delete must catch it and fail gracefully.
+        var customer = MakeCustomer(1);
+        _customerRepo
+            .Setup(r => r.GetByIdAsync(
+                1,
+                It.IsAny<System.Linq.Expressions.Expression<Func<Customer, object>>[]>()))
+            .ReturnsAsync(customer);
+        _uow.Setup(u => u.SaveAsync()).ThrowsAsync(new InvalidOperationException("FK violation"));
+
+        var result = await _sut.Delete(1);
+
+        result.Success.Should().BeFalse();
+        result.Error.Should().Contain("existing appointments");
+    }
 }

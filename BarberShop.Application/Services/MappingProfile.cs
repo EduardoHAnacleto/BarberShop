@@ -61,6 +61,9 @@ namespace BarberShop.Application.Services
             // BusinessSchedule
             CreateMap<BusinessSchedule, BusinessScheduleDTO>().ReverseMap();
 
+            // WorkerSchedule
+            CreateMap<WorkerSchedule, WorkerScheduleDTO>().ReverseMap();
+
             // WorkingHours (Closure)
             CreateMap<ClosureDTO, WorkingHours>()
                 .ForMember(dest => dest.Id, opt => opt.Ignore());

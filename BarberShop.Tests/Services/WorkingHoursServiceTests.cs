@@ -18,6 +18,8 @@ public class WorkingHoursServiceTests
     private readonly Mock<IUnitOfWork> _uow;
     private readonly Mock<IBusinessScheduleRepository> _scheduleRepo;
     private readonly Mock<IWorkingHoursRepository> _closureRepo;
+    private readonly Mock<IRedisService> _redis;
+    private readonly Mock<INotificationPublisher> _notifications;
     private readonly IMapper _mapper;
     private readonly WorkingHoursService _sut;
 
@@ -31,12 +33,19 @@ public class WorkingHoursServiceTests
         _uow.Setup(u => u.WorkingHours).Returns(_closureRepo.Object);
         _uow.Setup(u => u.SaveAsync()).ReturnsAsync(1);
 
+        _redis = new Mock<IRedisService>();
+        _redis.Setup(r => r.InvalidateByPrefixAsync(It.IsAny<string>())).Returns(Task.CompletedTask);
+
+        _notifications = new Mock<INotificationPublisher>();
+        _notifications.Setup(n => n.PublishAsync(It.IsAny<string>(), It.IsAny<string>())).Returns(Task.CompletedTask);
+
         _mapper = new MapperConfiguration(cfg =>
         {
             cfg.AddProfile<MappingProfile>();
         }, NullLoggerFactory.Instance).CreateMapper();
 
-        _sut = new WorkingHoursService(_uow.Object, _mapper, NullLogger<WorkingHoursService>.Instance);
+        _sut = new WorkingHoursService(
+            _uow.Object, _mapper, _redis.Object, _notifications.Object, NullLogger<WorkingHoursService>.Instance);
     }
 
     // =========================
@@ -209,6 +218,129 @@ public class WorkingHoursServiceTests
             Times.Once);
 
         _uow.Verify(u => u.SaveAsync(), Times.Once);
+        _notifications.Verify(n => n.PublishAsync("schedule", "ScheduleChanged"), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateScheduleAsync_WhenOpenWithoutTimes_ReturnsFail()
+    {
+        // Arrange
+        var existing = MakeSchedule(DayOfWeek.Monday);
+
+        _scheduleRepo
+            .Setup(r => r.GetByIdAsync(
+                existing.Id,
+                It.IsAny<System.Linq.Expressions.Expression<Func<BusinessSchedule, object>>[]>()))
+            .ReturnsAsync(existing);
+
+        var dto = new BusinessScheduleDTO
+        {
+            DayOfWeek = DayOfWeek.Monday,
+            IsOpen = true,
+            OpenTime = null,
+            CloseTime = null
+        };
+
+        // Act
+        var result = await _sut.UpdateScheduleAsync(existing.Id, dto);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.Error.Should().Contain("OpenTime and CloseTime are required");
+        _uow.Verify(u => u.SaveAsync(), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateScheduleAsync_WhenCloseNotAfterOpen_ReturnsFail()
+    {
+        // Arrange
+        var existing = MakeSchedule(DayOfWeek.Monday);
+
+        _scheduleRepo
+            .Setup(r => r.GetByIdAsync(
+                existing.Id,
+                It.IsAny<System.Linq.Expressions.Expression<Func<BusinessSchedule, object>>[]>()))
+            .ReturnsAsync(existing);
+
+        var dto = new BusinessScheduleDTO
+        {
+            DayOfWeek = DayOfWeek.Monday,
+            IsOpen = true,
+            OpenTime = new TimeSpan(18, 0, 0),
+            CloseTime = new TimeSpan(9, 0, 0)
+        };
+
+        // Act
+        var result = await _sut.UpdateScheduleAsync(existing.Id, dto);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.Error.Should().Contain("CloseTime must be after OpenTime");
+        _uow.Verify(u => u.SaveAsync(), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateScheduleAsync_WhenBreakInverted_ReturnsFail()
+    {
+        // Arrange
+        var existing = MakeSchedule(DayOfWeek.Monday);
+
+        _scheduleRepo
+            .Setup(r => r.GetByIdAsync(
+                existing.Id,
+                It.IsAny<System.Linq.Expressions.Expression<Func<BusinessSchedule, object>>[]>()))
+            .ReturnsAsync(existing);
+
+        var dto = new BusinessScheduleDTO
+        {
+            DayOfWeek = DayOfWeek.Monday,
+            IsOpen = true,
+            OpenTime = new TimeSpan(9, 0, 0),
+            CloseTime = new TimeSpan(18, 0, 0),
+            BreakStart = new TimeSpan(14, 0, 0),
+            BreakEnd = new TimeSpan(12, 0, 0)
+        };
+
+        // Act
+        var result = await _sut.UpdateScheduleAsync(existing.Id, dto);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.Error.Should().Contain("BreakEnd must be after BreakStart");
+        _uow.Verify(u => u.SaveAsync(), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateScheduleAsync_WithValidBreak_ReturnsSuccess()
+    {
+        // Arrange
+        var existing = MakeSchedule(DayOfWeek.Monday);
+
+        _scheduleRepo
+            .Setup(r => r.GetByIdAsync(
+                existing.Id,
+                It.IsAny<System.Linq.Expressions.Expression<Func<BusinessSchedule, object>>[]>()))
+            .ReturnsAsync(existing);
+
+        var dto = new BusinessScheduleDTO
+        {
+            Id = existing.Id,
+            DayOfWeek = DayOfWeek.Monday,
+            IsOpen = true,
+            OpenTime = new TimeSpan(9, 0, 0),
+            CloseTime = new TimeSpan(18, 0, 0),
+            BreakStart = new TimeSpan(12, 0, 0),
+            BreakEnd = new TimeSpan(13, 0, 0)
+        };
+
+        // Act
+        var result = await _sut.UpdateScheduleAsync(existing.Id, dto);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.Data!.BreakStart.Should().Be(new TimeSpan(12, 0, 0));
+        result.Data.BreakEnd.Should().Be(new TimeSpan(13, 0, 0));
+        _uow.Verify(u => u.SaveAsync(), Times.Once);
     }
 
     [Fact]
@@ -229,6 +361,7 @@ public class WorkingHoursServiceTests
         result.Error.Should().Be("Schedule not found");
 
         _uow.Verify(u => u.SaveAsync(), Times.Never);
+        _notifications.Verify(n => n.PublishAsync(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
     }
 
     // =========================
@@ -312,6 +445,7 @@ public class WorkingHoursServiceTests
             Times.Once);
 
         _uow.Verify(u => u.SaveAsync(), Times.Once);
+        _notifications.Verify(n => n.PublishAsync("schedule", "ScheduleChanged"), Times.Once);
     }
 
     // =========================
@@ -344,6 +478,7 @@ public class WorkingHoursServiceTests
             Times.Once);
 
         _uow.Verify(u => u.SaveAsync(), Times.Once);
+        _notifications.Verify(n => n.PublishAsync("schedule", "ScheduleChanged"), Times.Once);
     }
 
     [Fact]

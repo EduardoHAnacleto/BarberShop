@@ -61,12 +61,40 @@ public class AvailabilityService : IAvailabilityService
 
         // Whole day already in the past → nothing to offer.
         if (date < DateOnly.FromDateTime(now))
+        {
+            response.IsOpen = false;
             return Result<AvailabilityResponseDTO>.Ok(response);
+        }
 
-        var schedule = await _workingHours.GetScheduleByDayAsync(date.DayOfWeek);
+        // The shop must be open that weekday at all — a per-worker override
+        // can narrow hours or take a worker off a day the shop is open, but
+        // it can never make a worker available on a day the shop is closed.
+        var shopSchedule = await _workingHours.GetScheduleByDayAsync(date.DayOfWeek);
+        if (shopSchedule is not { IsOpen: true } ||
+            !shopSchedule.OpenTime.HasValue || !shopSchedule.CloseTime.HasValue)
+        {
+            response.IsOpen = false;
+            return Result<AvailabilityResponseDTO>.Ok(response);
+        }
+
+        var workerOverride = await _uow.WorkerSchedules.GetByWorkerAndDayAsync(workerId, date.DayOfWeek);
+        var schedule = workerOverride == null
+            ? shopSchedule
+            : new BusinessScheduleDTO
+            {
+                IsOpen = workerOverride.IsOpen,
+                OpenTime = workerOverride.OpenTime,
+                CloseTime = workerOverride.CloseTime,
+                BreakStart = workerOverride.BreakStart,
+                BreakEnd = workerOverride.BreakEnd,
+            };
+
         if (schedule is not { IsOpen: true } ||
             !schedule.OpenTime.HasValue || !schedule.CloseTime.HasValue)
+        {
+            response.IsOpen = false;
             return Result<AvailabilityResponseDTO>.Ok(response);
+        }
 
         var dayStart = date.ToDateTime(TimeOnly.MinValue);
         var dayEnd = date.ToDateTime(TimeOnly.MaxValue);

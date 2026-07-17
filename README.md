@@ -144,3 +144,17 @@ The stack ships with a full observability pipeline out of the box:
 docker compose down        # stop containers, keep volumes
 docker compose down -v     # stop containers + delete database data
 ```
+
+---
+
+## 📜 License
+
+**All rights reserved — source-available for evaluation.**
+
+This repository is published as a professional portfolio. You are welcome to view, clone,
+build and run it locally to evaluate the work (see [LICENSE](LICENSE) for the exact terms).
+Production or commercial use — including operating it for a real business — requires a
+separate written agreement: the application is offered as a **rented, managed per-client
+instance** (dedicated stack, domain, database and support).
+
+Licensing / rental inquiries: **eduardohanacleto@gmail.com**

@@ -18,6 +18,8 @@ public class UnitOfWork : IUnitOfWork
     public IWorkingHoursRepository WorkingHours { get; }
     public IBusinessScheduleRepository BusinessSchedules { get; }
     public IReviewRepository Reviews { get; }
+    public IWaitlistRepository Waitlist { get; }
+    public IWorkerScheduleRepository WorkerSchedules { get; }
 
     public UnitOfWork(AppDbContext context)
     {
@@ -30,6 +32,8 @@ public class UnitOfWork : IUnitOfWork
         WorkingHours = new WorkingHoursRepository(context);
         BusinessSchedules = new BusinessScheduleRepository(context);
         Reviews = new ReviewRepository(context);
+        Waitlist = new WaitlistRepository(context);
+        WorkerSchedules = new WorkerScheduleRepository(context);
     }
 
     public async Task<int> SaveAsync()

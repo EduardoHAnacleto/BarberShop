@@ -47,17 +47,20 @@ public class AppointmentsService : BaseService, IAppointmentsService
     private readonly IUnitOfWork _uow;
     private readonly IMapper _mapper;
     private readonly ILogger<AppointmentsService> _logger;
+    private readonly IWaitlistService _waitlist;
 
     public AppointmentsService(
         IUnitOfWork uow,
         IMapper mapper,
         IRedisService redis,
         INotificationPublisher notifications,
-        ILogger<AppointmentsService> logger) : base(redis, notifications)
+        ILogger<AppointmentsService> logger,
+        IWaitlistService waitlist) : base(redis, notifications)
     {
         _uow = uow;
         _mapper = mapper;
         _logger = logger;
+        _waitlist = waitlist;
     }
 
     // =========================
@@ -467,7 +470,28 @@ public class AppointmentsService : BaseService, IAppointmentsService
 
         _logger.LogInformation("Appointment {AppointmentId} cancelled successfully", id);
 
+        // Best-effort: a slot just freed up — tell anyone waiting for this
+        // worker on this day. Never let a notification hiccup fail the
+        // cancellation itself.
+        await NotifyWaitlistSafelyAsync(entity.WorkerId, entity.ScheduledFor);
+
         return Result<AppointmentResponseDTO>.Ok(null);
+    }
+
+    // Wraps IWaitlistService so a notification failure (e.g. a transient SMTP
+    // error) never surfaces as a failed cancellation — the appointment is
+    // already committed by the time this runs.
+    private async Task NotifyWaitlistSafelyAsync(int workerId, DateTime scheduledFor)
+    {
+        try
+        {
+            await _waitlist.NotifyWaitlistForAsync(workerId, scheduledFor);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Waitlist notification failed for WorkerId {WorkerId} on {Date}", workerId, scheduledFor);
+        }
     }
 
     // =========================
@@ -625,6 +649,7 @@ public class AppointmentsService : BaseService, IAppointmentsService
             return Result<List<AppointmentResponseDTO>>.Fail("No appointments provided");
 
         var results = new List<AppointmentResponseDTO?>();
+        var freedSlots = new List<(int WorkerId, DateTime ScheduledFor)>();
         foreach (var id in idList)
         {
             var entity = await _uow.Appointments.GetByIdAsync(id);
@@ -648,6 +673,7 @@ public class AppointmentsService : BaseService, IAppointmentsService
             entity.CompletedAt = DateTime.UtcNow;
             _uow.Appointments.Update(entity);
             results.Add(_mapper.Map<AppointmentResponseDTO>(entity));
+            freedSlots.Add((entity.WorkerId, entity.ScheduledFor));
         }
 
         await _uow.SaveAsync();
@@ -659,6 +685,11 @@ public class AppointmentsService : BaseService, IAppointmentsService
         _logger.LogInformation(
             "{Cancelled} of {Total} appointments cancelled",
             results.Count, idList.Count);
+
+        // One worker+day pair notified once even if several appointments for
+        // it were cancelled in the same batch.
+        foreach (var (workerId, scheduledFor) in freedSlots.Distinct())
+            await NotifyWaitlistSafelyAsync(workerId, scheduledFor);
 
         return Result<List<AppointmentResponseDTO>>.Ok(results!);
     }
